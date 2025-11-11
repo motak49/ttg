@@ -25,8 +25,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QTimer
-from common.config import OX_GAME_TARGET_FPS, timer_interval_ms
+from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
+from common.config import OX_GAME_TARGET_FPS, TARGET_FPS, timer_interval_ms
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QCloseEvent
 
 from backend.camera_manager import CameraManager
@@ -65,6 +65,14 @@ class OxGame(QWidget):
         self.first_hit_coord: Optional[Tuple[int, int]] = None
 
         # UI 要素
+        self.fps_label = QLabel(self)
+        self.fps_label.setText(f"FPS: {OX_GAME_TARGET_FPS}")
+
+        # FPS計算用変数
+        self.frame_count = 0
+        self.last_time = QElapsedTimer()
+        self.last_time.start()
+
         self.player_label = QLabel(self)
         self._update_player_label()
 
@@ -77,6 +85,7 @@ class OxGame(QWidget):
         self.video_label.setMinimumSize(0, 0)
 
         layout = QVBoxLayout()
+        layout.addWidget(self.fps_label)
         layout.addWidget(self.player_label)
         layout.addWidget(self.video_label)
         self.setLayout(layout)
@@ -263,6 +272,15 @@ class OxGame(QWidget):
         # ヒット判定（既に上部で取得済みの hit を使用）
         if hit is not None:
             self._process_hit(hit)
+
+        # FPS計算と表示更新
+        self.frame_count += 1
+        elapsed = self.last_time.elapsed()
+        if elapsed >= 1000:  # 1秒ごとにFPSを計算
+            actual_fps = self.frame_count * 1000.0 / elapsed
+            self.fps_label.setText(f"FPS: {OX_GAME_TARGET_FPS} (実測: {actual_fps:.1f})")
+            self.frame_count = 0
+            self.last_time.restart()
 
     def closeEvent(self, a0: Optional[QCloseEvent] = None) -> None:
         """ウィンドウ閉じるときにタイマー停止・カメラ解放"""

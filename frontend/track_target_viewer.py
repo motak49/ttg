@@ -21,6 +21,7 @@ from backend.ball_tracker import BallTracker
 from frontend.game_logic import game_logic
 import logging
 from common.logger import logger
+from common.config import TRACK_TARGET_CONFIG_FPS, timer_interval_ms
 import cv2
 import numpy as np
 

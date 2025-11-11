@@ -7,10 +7,12 @@
 """
 
 # OxGame 用フレームレート（約30fps）
-OX_GAME_TARGET_FPS = 30
+OX_GAME_TARGET_FPS = 120
+TARGET_FPS = OX_GAME_TARGET_FPS
 
 # TrackTargetConfig 用フレームレート（約120fps）
 TRACK_TARGET_CONFIG_FPS = 120
+TIMER_INTERVAL_MS = int(1000 / TARGET_FPS)
 
 
 def timer_interval_ms(fps: int) -> int:

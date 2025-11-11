@@ -23,6 +23,7 @@ from frontend.track_target_config import TrackTargetConfig
 
 # external_api は外部から BallTracker を取得できるようにするためだけに呼び出す
 from backend import external_api
+from common.validation import validate_and_create_defaults
 
 
 class MainWindow(QMainWindow):
@@ -271,6 +272,9 @@ class MainWindow(QMainWindow):
 
 
 def main() -> None:
+    # バリデーションを実行
+    validate_and_create_defaults()
+    
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
