@@ -20,6 +20,7 @@ from backend.ball_tracker import BallTracker
 
 from frontend.track_target_viewer import TrackTargetViewer
 from frontend.track_target_config import TrackTargetConfig
+from frontend.depth_config import DepthConfig
 
 # external_api は外部から BallTracker を取得できるようにするためだけに呼び出す
 from backend import external_api
@@ -60,7 +61,7 @@ class MainWindow(QMainWindow):
 
         # 深度設定機能ボタン
         set_screen_depth_btn = QPushButton("深度設定")
-        set_screen_depth_btn.clicked.connect(self.show_set_screen_depth)  # type: ignore
+        set_screen_depth_btn.clicked.connect(self.show_set_screen_depth_window)  # type: ignore
         button_layout.addWidget(set_screen_depth_btn)
 
         # 深度確認機能ボタン
@@ -171,6 +172,18 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "深度確認", f"現在の深度: {depth} mm")
         except Exception as e:
             QMessageBox.critical(self, "エラー", f"スクリーンデータの読み込みに失敗しました: {e}")
+
+    def show_set_screen_depth_window(self) -> None:
+        """深度設定画面を開く"""
+        if not self.camera_manager.is_initialized():
+            QMessageBox.critical(
+                self,
+                "カメラエラー",
+                "カメラが初期化されていません。まずアプリを再起動してください。",
+            )
+            return
+        self.depth_config_window = DepthConfig(self.camera_manager, self.screen_manager)
+        self.depth_config_window.show()
 
     # ----- トラッキング対象設定 -----
     def show_set_track_ball(self) -> None:

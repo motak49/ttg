@@ -1,0 +1,241 @@
+import json
+import os
+from typing import Optional
+
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+)
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPainter, QColor, QPen, QImage, QPixmap, QCloseEvent, QMouseEvent
+from common.config import TRACK_TARGET_CONFIG_FPS, timer_interval_ms
+from backend.camera_manager import CameraManager
+from backend.screen_manager import ScreenManager
+
+# 深度ログファイルのパス（既存のものを利用）
+DEPTH_LOG_PATH = "ScreenDepthLogs/depth_log.json"
+
+
+class DepthConfig(QWidget):
+    """
+    深度設定画面
+    カメラ映像をグリッド付きで表示し、クリックした座標の深度を表示・保存可能
+    """
+
+    def __init__(self, camera_manager: CameraManager, screen_manager: ScreenManager) -> None:
+        super().__init__()
+        self.setWindowTitle("深度設定")
+        self.setGeometry(100, 100, 1000, 700)
+
+        self.camera_manager = camera_manager
+        self.screen_manager = screen_manager
+
+        # カメラ映像を表示する QLabel
+        self.video_label = QLabel(self)
+        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_label.setMinimumSize(800, 600)
+        self.video_label.mousePressEvent = self.on_video_click  # クリックハンドラの設定
+
+        # 深度表示用ラベル
+        self.depth_label = QLabel(self)
+        self.depth_label.setText("Depth: -- mm")
+        self.depth_label.setStyleSheet("font-size: 16px; color: blue;")
+
+        # ボタンレイアウト
+        button_layout = QHBoxLayout()
+        
+        # 戻るボタン
+        self.back_btn = QPushButton("戻る")
+        self.back_btn.clicked.connect(self.close)
+        button_layout.addWidget(self.back_btn)
+
+        # 保存ボタン
+        self.save_btn = QPushButton("深度を保存")
+        self.save_btn.clicked.connect(self.save_depths)
+        button_layout.addWidget(self.save_btn)
+
+        # レイアウト設定
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.video_label)
+        main_layout.addWidget(self.depth_label)  # 深度表示ラベルを追加
+        main_layout.addLayout(button_layout)
+        self.setLayout(main_layout)
+
+        # タイマーで映像を更新（120fps固定）
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_frame)
+        self.timer.start(timer_interval_ms(TRACK_TARGET_CONFIG_FPS))  # 約120fps (config)
+
+        # クリックされた座標リスト
+        self.click_points = []
+        # フレームと表示サイズの情報（座標変換用）
+        self._frame_width = 0
+        self._frame_height = 0
+        self._displayed_width = 0
+        self._displayed_height = 0
+
+    def update_frame(self) -> None:
+        """カメラフレーム取得 → QLabel に描画 + グリッドとクリックポイントをオーバーレイ"""
+        try:
+            frame = self.camera_manager.get_frame()
+        except Exception as e:
+            print(f"カメラ取得エラー: {e}")
+            frame = None
+
+        if frame is None:
+            width, height = 800, 600
+            placeholder = QImage(width, height, QImage.Format.Format_RGB888)
+            placeholder.fill(Qt.GlobalColor.lightGray)
+            frame = placeholder
+
+        if isinstance(frame, QImage):
+            q_img = frame
+        else:
+            try:
+                if len(frame.shape) == 2:  # モノクロ (height, width)
+                    height, width = frame.shape
+                    bytes_per_line = width
+                    img_format = QImage.Format.Format_Grayscale8
+                else:  # カラー (height, width, channels)
+                    height, width, _ = frame.shape
+                    bytes_per_line = 3 * width
+                    img_format = QImage.Format.Format_BGR888
+
+                q_img = QImage(
+                    frame.data,
+                    width,
+                    height,
+                    bytes_per_line,
+                    img_format,
+                )
+            except Exception as e:
+                print(f"フレーム取得時の形状エラー: {e}")
+                return
+        pix = QPixmap.fromImage(q_img)
+
+        painter = QPainter(pix)
+        try:
+            width = pix.width()
+            height = pix.height()
+
+            # グリッド線を描画 (10x10 マス)
+            self.draw_grid(painter, width, height)
+
+            # クリックされたポイントを描画（青い円）
+            for point in self.click_points:
+                x, y = point
+                painter.setPen(QPen(QColor(0, 0, 255), 3))  # 青色
+                painter.drawEllipse(x - 25, y - 25, 50, 50)  # 半径25の円
+
+            self.video_label.setPixmap(
+                pix.scaled(
+                    self.video_label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            # 座標変換用にフレームと表示サイズを保持
+            self._frame_width = width
+            self._frame_height = height
+            displayed_pixmap = self.video_label.pixmap()
+            if displayed_pixmap:
+                self._displayed_width = displayed_pixmap.width()
+                self._displayed_height = displayed_pixmap.height()
+            else:
+                self._displayed_width = self.video_label.width()
+                self._displayed_height = self.video_label.height()
+        except Exception as e:
+            print(f"描画エラー: {e}")
+        finally:
+            painter.end()
+
+    def draw_grid(self, painter: QPainter, width: int, height: int) -> None:
+        """グリッド線を描画"""
+        grid_size = 50  # グリッドの間隔（ピクセル）
+        pen = QPen(QColor(200, 200, 200), 1)  # 軽い灰色
+        painter.setPen(pen)
+
+        # 垂直線
+        for x in range(0, width, grid_size):
+            painter.drawLine(x, 0, x, height)
+        # 水平線
+        for y in range(0, height, grid_size):
+            painter.drawLine(0, y, width, y)
+
+    def on_video_click(self, event: QMouseEvent) -> None:
+        """映像上でのクリック処理"""
+        # QLabel 内の座標に変換
+        label_pos = self.video_label.mapFromGlobal(event.globalPosition().toPoint())
+
+        # ラベルと実際に表示されている画像サイズの差分（余白）を計算
+        offset_x = (self.video_label.width() - self._displayed_width) // 2
+        offset_y = (self.video_label.height() - self._displayed_height) // 2
+
+        # 余白分を除去して画像上の相対座標へ変換
+        x_rel = label_pos.x() - offset_x
+        y_rel = label_pos.y() - offset_y
+
+        # クリックが画像領域外だったら無視
+        if not (0 <= x_rel < self._displayed_width and 0 <= y_rel < self._displayed_height):
+            return
+
+        # スケール比率を算出（元フレーム ↔ 表示サイズ）
+        scale_x = self._frame_width / self._displayed_width
+        scale_y = self._frame_height / self._displayed_height
+
+        # 元フレーム座標に変換
+        img_x = int(x_rel * scale_x)
+        img_y = int(y_rel * scale_y)
+
+        # クリック座標リストへ保存（元画像座標で保持）
+        self.click_points.append((img_x, img_y))
+
+        # 深度情報を取得して表示
+        try:
+            depth_mm = self.camera_manager.get_depth_at(img_x, img_y)
+            self.depth_label.setText(f"Depth: {depth_mm:.1f} mm")
+        except Exception as e:
+            print(f"深度取得エラー: {e}")
+            self.depth_label.setText("Depth: Error")
+
+    def save_depths(self) -> None:
+        """クリックされた座標と深度をログファイルに保存"""
+        if not self.click_points:
+            return
+
+        try:
+            # 既存ログを読み込み
+            log_data = []
+            if os.path.exists(DEPTH_LOG_PATH):
+                with open(DEPTH_LOG_PATH, "r", encoding="utf-8") as f:
+                    log_data = json.load(f)
+
+            # 新しいデータを追加
+            for x, y in self.click_points:
+                depth_mm = self.camera_manager.get_depth_at(x, y)
+                log_data.append({
+                    "x": x,
+                    "y": y,
+                    "depth_mm": round(depth_mm, 1)
+                })
+
+            # ファイルに書き込み
+            os.makedirs(os.path.dirname(DEPTH_LOG_PATH), exist_ok=True)
+            with open(DEPTH_LOG_PATH, "w", encoding="utf-8") as f:
+                json.dump(log_data, f, ensure_ascii=False, indent=4)
+
+            print("深度ログが保存されました。")
+            self.click_points.clear()  # 保存後はクリア
+            self.depth_label.setText("Depth: -- mm")
+
+        except Exception as e:
+            print(f"深度保存エラー: {e}")
+
+    def closeEvent(self, a0: Optional[QCloseEvent] = None) -> None:
+        """ウィンドウクローズ時の処理"""
+        if hasattr(self, "timer") and self.timer.isActive():
+            self.timer.stop()
+        super().closeEvent(a0)

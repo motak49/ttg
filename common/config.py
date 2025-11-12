@@ -6,7 +6,7 @@
 - タイマー間隔 (ms) を FPS から計算するユーティリティ関数
 """
 
-# OxGame 用フレームレート（約30fps）
+# OxGame 用フレームレート（約120fps）
 OX_GAME_TARGET_FPS = 120
 TARGET_FPS = OX_GAME_TARGET_FPS
 

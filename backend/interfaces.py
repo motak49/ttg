@@ -37,6 +37,11 @@ class CameraInterface(ABC):
         """カメラをクローズする"""
         pass
 
+    @abstractmethod
+    def get_depth_at(self, x: int, y: int) -> float:
+        """(x, y) のピクセル座標に対応する深度 (mm) を取得"""
+        pass
+
 
 class BallTrackerInterface(ABC):
     """ボール追跡ロジックのインターフェース"""

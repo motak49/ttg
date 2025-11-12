@@ -19,6 +19,8 @@ class CameraManager(CameraInterface):
         self.fps: int = 120
         # カメラ初期化状態フラグ
         self._initialized: bool = False
+        # 深度ストリーム
+        self.depth_stream: Optional[Any] = None
 
     def is_initialized(self) -> bool:
         """カメラが既に初期化されているかを返す"""
@@ -46,16 +48,40 @@ class CameraManager(CameraInterface):
             color_cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 
             # プレビュー出力の作成
-            xout = self.pipeline.createXLinkOut()
-            xout.setStreamName("preview")
-            # video 出力はフル解像度の BGR フレームを返す
-            color_cam.video.link(xout.input)
+            preview_xout = self.pipeline.createXLinkOut()
+            preview_xout.setStreamName("preview")
+            color_cam.video.link(preview_xout.input)
+
+            # ----- ステレオ深度ストリームの構築 -----
+            mono_left = self.pipeline.createMonoCamera()
+            mono_right = self.pipeline.createMonoCamera()
+            mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
+            mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
+            mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
+            mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+
+            stereo = self.pipeline.createStereoDepth()
+            stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+            # 必要なら出力サイズを小さめにして負荷軽減
+            stereo.setOutputSize(640, 400)
+
+            mono_left.out.link(stereo.left)
+            mono_right.out.link(stereo.right)
+
+            depth_xout = self.pipeline.createXLinkOut()
+            depth_xout.setStreamName("depth")
+            stereo.depth.link(depth_xout.input)
 
             # デバイス接続（DepthAI の Device は自動で開始される）
             self.device = dai.Device(self.pipeline)
 
-            # ストリーム取得（DepthAI の仕様に合わせて maxSize と blocking を設定）
+            # ストリーム取得
             self.video_stream = self.device.getOutputQueue(name="preview")
+            try:
+                self.depth_stream = self.device.getOutputQueue(name="depth")
+            except Exception as e:
+                logging.error(f"深度ストリーム取得エラー: {e}")
+                self.depth_stream = None  # 深度機能は無効化
 
             # 初期化成功フラグを立てる
             self._initialized = True
@@ -71,6 +97,7 @@ class CameraManager(CameraInterface):
                 self.device = None
                 self.pipeline = None
                 self.video_stream = None
+                self.depth_stream = None
                 self._initialized = False
             return False
 
@@ -103,6 +130,34 @@ class CameraManager(CameraInterface):
             placeholder.fill(Qt.GlobalColor.lightGray)
             return placeholder
 
+    def get_depth_frame(self) -> Optional[Any]:
+        """最新の深度フレーム (numpy 配列) を取得。取得できなければ None."""
+        if not self._initialized or self.depth_stream is None:
+            return None
+        try:
+            depth_msg = self.depth_stream.get()
+            # DepthAI の ImgFrame から numpy 配列へ変換
+            depth_frame = depth_msg.getFrame()   # getFrame() は uint16 (mm) データを返す
+            return depth_frame
+        except Exception as e:
+            logging.error(f"深度フレーム取得エラー: {e}")
+            return None
+
+    def get_depth_at(self, x: int, y: int) -> float:
+        """
+        (x, y) のピクセル座標に対する深度を mm 単位で返す。
+        取得できない場合は 0.0 を返す（呼び出し側でエラーハンドリング）。
+        """
+        depth_frame = self.get_depth_frame()
+        if depth_frame is None:
+            return 0.0
+        # 範囲チェック
+        h, w = depth_frame.shape
+        if not (0 <= x < w and 0 <= y < h):
+            return 0.0
+        # DepthAI の深度は uint16 (mm) なのでそのまま返す
+        return float(depth_frame[y, x])
+
     def set_fps(self, fps: int) -> None:
         """FPS を設定する（実機では使用しないがインターフェースは保持）"""
         self.fps = fps
@@ -119,4 +174,5 @@ class CameraManager(CameraInterface):
             self.device = None
             self.pipeline = None
             self.video_stream = None
+            self.depth_stream = None   # 追加
             self._initialized = False
