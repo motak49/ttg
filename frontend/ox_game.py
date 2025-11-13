@@ -47,7 +47,7 @@ class OxGame(QWidget):
         super().__init__()
         self.setWindowTitle("OXゲーム")
         self.move(100, 100)
-        self.setFixedSize(1920, 1080)
+        self.resize(800, 600)   # 起動時サイズを領域設定と同じにし、以降はリサイズ可能
 
         # バックエンドコンポーネント
         self.camera_manager = camera_manager
@@ -181,7 +181,12 @@ class OxGame(QWidget):
             frame = None
 
         if frame is None:
-            width, height = 800, 600
+            # ウィンドウサイズに応じたプレースホルダー生成
+            width = self.video_label.width() or self.width()
+            height = self.video_label.height() or self.height()
+            # ウィンドウがまだ初期化されていない場合、デフォルト値を設定
+            if width <= 0 or height <= 0:
+                width, height = 800, 600
             placeholder = QImage(width, height, QImage.Format.Format_RGB888)
             placeholder.fill(Qt.GlobalColor.lightGray)
             q_img = placeholder

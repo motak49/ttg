@@ -93,6 +93,15 @@ class MainWindow(QMainWindow):
         self.ball_tracker = BallTracker(self.screen_manager)
         external_api.set_ball_tracker(self.ball_tracker)
 
+        # キャリブレーションデータをロード
+        try:
+            import json
+            with open("calibration_data.json", "r", encoding="utf-8") as f:
+                calib_data = json.load(f)
+            self.camera_manager.calibration_data = calib_data
+        except Exception as e:
+            print(f"キャリブレーションデータ読み込みエラー: {e}")
+
         # スタイル適用（任意）
         self._apply_styles()
 

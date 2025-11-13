@@ -44,6 +44,10 @@ class DepthConfig(QWidget):
         self.depth_label.setText("Depth: -- mm")
         self.depth_label.setStyleSheet("font-size: 16px; color: blue;")
 
+        # デバッグオプション
+        self._debug_confidence = False
+        self._debug_contrast = False
+
         # ボタンレイアウト
         button_layout = QHBoxLayout()
         
@@ -76,6 +80,9 @@ class DepthConfig(QWidget):
         self._frame_height = 0
         self._displayed_width = 0
         self._displayed_height = 0
+        # 深度フレームサイズ（座標変換用）
+        self._depth_width = 0
+        self._depth_height = 0
 
     def update_frame(self) -> None:
         """カメラフレーム取得 → QLabel に描画 + グリッドとクリックポイントをオーバーレイ"""
@@ -130,10 +137,33 @@ class DepthConfig(QWidget):
                 painter.setPen(QPen(QColor(0, 0, 255), 3))  # 青色
                 painter.drawEllipse(x - 25, y - 25, 50, 50)  # 半径25の円
 
+            # 信頼度マップをオーバーレイ表示（デバッグ時のみ）
+            if self._debug_confidence:
+                confidence_map = self.camera_manager.get_confidence_map()
+                if confidence_map is not None:
+                    try:
+                        import cv2
+                        # 信頼度マップを画像に変換（0〜255のグレースケール）
+                        confidence_display = cv2.normalize(confidence_map, None, 0, 255, cv2.NORM_MINMAX)
+                        confidence_qimg = QImage(
+                            confidence_display.data,
+                            confidence_display.shape[1],
+                            confidence_display.shape[0],
+                            confidence_display.strides[0],
+                            QImage.Format.Format_Grayscale8
+                        )
+                        confidence_pixmap = QPixmap.fromImage(confidence_qimg)
+                        # 画像を合成して半透明で表示（サイズは適宜調整）
+                        painter.setOpacity(0.5)
+                        painter.drawPixmap(0, 0, confidence_pixmap.scaled(width, height))
+                        painter.setOpacity(1.0)
+                    except Exception as e:
+                        print(f"信頼度マップ描画エラー: {e}")
+
             self.video_label.setPixmap(
                 pix.scaled(
                     self.video_label.size(),
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
             )
@@ -147,6 +177,14 @@ class DepthConfig(QWidget):
             else:
                 self._displayed_width = self.video_label.width()
                 self._displayed_height = self.video_label.height()
+            
+            # 深度フレームのサイズを取得
+            depth_frame = self.camera_manager.get_depth_frame()
+            if depth_frame is not None:
+                self._depth_width, self._depth_height = depth_frame.shape[1], depth_frame.shape[0]
+            else:
+                self._depth_width = 0
+                self._depth_height = 0
         except Exception as e:
             print(f"描画エラー: {e}")
         finally:
@@ -190,12 +228,38 @@ class DepthConfig(QWidget):
         img_x = int(x_rel * scale_x)
         img_y = int(y_rel * scale_y)
 
+        # 座標をフレーム範囲内にクランプ（端のピクセルが範囲外になる問題を回避）
+        img_x = max(0, min(self._frame_width - 1, img_x))
+        img_y = max(0, min(self._frame_height - 1, img_y))
+
         # クリック座標リストへ保存（元画像座標で保持）
         self.click_points.append((img_x, img_y))
 
         # 深度情報を取得して表示
         try:
-            depth_mm = self.camera_manager.get_depth_at(img_x, img_y)
+            # デバッグ用に座標変換の詳細を出力
+            if self._depth_width > 0 and self._depth_height > 0:
+                print(f"[DEBUG] Frame size: {self._frame_width}x{self._frame_height}, Depth size: {self._depth_width}x{self._depth_height}")
+                print(f"[DEBUG] Clicked point: ({img_x}, {img_y})")
+                depth_scale_x = self._depth_width / self._frame_width
+                depth_scale_y = self._depth_height / self._frame_height
+                depth_x = int(img_x * depth_scale_x)
+                depth_y = int(img_y * depth_scale_y)
+                # 深度フレームの範囲内にクランプ
+                depth_x = max(0, min(self._depth_width - 1, depth_x))
+                depth_y = max(0, min(self._depth_height - 1, depth_y))
+                print(f"[DEBUG] Converted depth point: ({depth_x}, {depth_y})")
+                # 生の深度値を取得し、表示前に確認
+                raw_depth = self.camera_manager.get_depth_at(depth_x, depth_y)
+                print(f"[DEBUG] Raw depth value: {raw_depth} mm")
+                # 補正なし（統一されたロジック）
+                depth_mm = raw_depth
+                print(f"[DEBUG] Final depth (no correction): {depth_mm:.1f} mm")
+            else:
+                # 深度フレームが取得できない場合は元の座標を使用
+                raw_depth = self.camera_manager.get_depth_at(img_x, img_y)
+                print(f"[DEBUG] Raw depth value (fallback): {raw_depth} mm")
+                depth_mm = raw_depth  # 補正なし
             self.depth_label.setText(f"Depth: {depth_mm:.1f} mm")
         except Exception as e:
             print(f"深度取得エラー: {e}")
