@@ -12,6 +12,7 @@ TARGET_FPS = OX_GAME_TARGET_FPS
 
 # TrackTargetConfig 用フレームレート（約120fps）
 TRACK_TARGET_CONFIG_FPS = 120
+GRID_LINE_WIDTH = 20  # 線幅 (ピクセル) – デフォルトは 2px から変更
 TIMER_INTERVAL_MS = int(1000 / TARGET_FPS)
 
 

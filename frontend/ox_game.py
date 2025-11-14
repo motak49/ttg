@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
-from common.config import OX_GAME_TARGET_FPS, TARGET_FPS, timer_interval_ms
+from common.config import OX_GAME_TARGET_FPS, TARGET_FPS, timer_interval_ms, GRID_LINE_WIDTH
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QCloseEvent
 
 from backend.camera_manager import CameraManager
@@ -62,6 +62,8 @@ class OxGame(QWidget):
         # 1: 壱号 (〇), 2: 弐号 (✕)
         self.current_player = 1
         self.debug = True
+        self.collision_shown = False  # whether large blue circle has been drawn for current turn
+        self.last_collision_point: Optional[Tuple[int, int]] = None
         self.first_hit_coord: Optional[Tuple[int, int]] = None
 
         # UI 要素
@@ -91,9 +93,12 @@ class OxGame(QWidget):
         self.setLayout(layout)
 
         # タイマーでフレーム更新 & ヒット判定
+        self.tracking_active = False
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
-        self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 約30fps (config)
+        if self._show_start_dialog():
+            self.tracking_active = True
+            self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 約30fps (config)
 
     def _update_player_label(self) -> None:
         if self.current_player == 1:
@@ -127,6 +132,8 @@ class OxGame(QWidget):
             # プレイヤー交代
             self.current_player = 2 if self.current_player == 1 else 1
             self._update_player_label()
+            msg_text = "プレーヤー②に交代します" if self.current_player == 2 else "プレーヤー①に交代します"
+            self._show_turn_change_message(msg_text)
 
     def _draw_markers(self, painter: QPainter, cell_w: int, cell_h: int) -> None:
         """盤面上のマーカー (〇/✕) を描画"""
@@ -155,7 +162,7 @@ class OxGame(QWidget):
 
     def _draw_grid(self, painter: QPainter, width: int, height: int) -> None:
         """3×3 グリッド描画"""
-        pen = QPen(QColor(0, 0, 0), 2)
+        pen = QPen(QColor(0, 0, 0), GRID_LINE_WIDTH)
         painter.setPen(pen)
 
         cell_w = width // 3
@@ -170,6 +177,43 @@ class OxGame(QWidget):
         for i in range(1, 3):
             y = i * cell_h
             painter.drawLine(0, y, width, y)
+
+    def _show_start_dialog(self) -> bool:
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("ゲームスタート")
+        dlg.setText("ゲームを開始しますか？")
+        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        result = dlg.exec()
+        return result == QMessageBox.StandardButton.Ok
+
+    def pause_tracking(self) -> None:
+        """トラッキングを一時停止し、タイマーとフラグをオフにする"""
+        if self.tracking_active:
+            self.timer.stop()
+            self.tracking_active = False
+
+    def resume_tracking(self) -> None:
+        """トラッキング再開。タイマー開始とフラグオン。衝突表示フラグリセット"""
+        if not self.tracking_active:
+            self.tracking_active = True
+            self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))
+            self.collision_shown = False
+
+    def _show_turn_change_message(self, text: str) -> None:
+        """2秒間メッセージ表示し、トラッキングを一時停止→再開する"""
+        self.pause_tracking()
+        msg = QMessageBox(self)
+        msg.setWindowTitle("")
+        msg.setText(text)
+        msg.setStandardButtons(QMessageBox.StandardButton.NoButton)
+        msg.setWindowModality(Qt.WindowModality.NonModal)  # 非モーダルに変更
+        msg.show()
+        QTimer.singleShot(2000, lambda: self._close_turn_message(msg))
+
+    def _close_turn_message(self, msg: QMessageBox) -> None:
+        """メッセージを閉じ、トラッキングを再開する"""
+        msg.close()
+        self.resume_tracking()
 
     def _update_frame(self) -> None:
         """カメラフレーム取得 → UI 更新 + ヒット判定"""
@@ -237,25 +281,26 @@ class OxGame(QWidget):
         self._draw_markers(painter, cell_w, cell_h)
 
         # デバッグ描画: 検出されたボール位置 (緑の円) と深度表示
-        if self.debug and detected is not None:
+        if self.debug and self.tracking_active and detected is not None:
             x, y, depth = detected
             painter.setPen(QPen(QColor(0, 255, 0), 3))
-            radius = 5
-            painter.drawEllipse(x - radius, y - radius, radius * 2, radius * 2)
+            size = 30
+            painter.drawRect(x - size // 2, y - size // 2, size, size)
             # 深度テキスト表示
             painter.setPen(QPen(QColor(0, 255, 0), 1))
-            painter.drawText(x + radius + 2, y - radius - 2, f"{depth:.2f}")
+            painter.drawText(x + size // 2 + 2, y - size // 2 - 2, f"{depth:.2f}")
 
         # ヒットが検出された場合は青い円で強調し深度表示
-        if self.debug and hit is not None:
+        if self.debug and self.tracking_active and hit is not None:
             hx, hy, hdepth = hit
-            # 青色の輪郭円（ヒット毎に描画）
-            painter.setPen(QPen(QColor(0, 0, 255), 3))
-            radius_hit = 8
-            painter.drawEllipse(hx - radius_hit, hy - radius_hit, radius_hit * 2, radius_hit * 2)
+            if not self.collision_shown:
+                painter.setPen(QPen(QColor(0, 0, 255), 3))
+                radius_hit = 50
+                painter.drawEllipse(hx - radius_hit, hy - radius_hit, radius_hit * 2, radius_hit * 2)
+                self.collision_shown = True
             # 深度テキスト表示（青）
             painter.setPen(QPen(QColor(0, 0, 255), 1))
-            painter.drawText(hx + radius_hit + 2, hy - radius_hit - 2, f"{hdepth:.2f}")
+            painter.drawText(hx + 52, hy - 48, f"{hdepth:.2f}")
 
         # 最初にヒットした座標を塗りつぶしの青円で固定表示
         if self.first_hit_coord is not None:
@@ -275,7 +320,7 @@ class OxGame(QWidget):
         )
 
         # ヒット判定（既に上部で取得済みの hit を使用）
-        if hit is not None:
+        if self.tracking_active and hit is not None:
             self._process_hit(hit)
 
         # FPS計算と表示更新

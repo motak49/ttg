@@ -90,6 +90,13 @@ class BallTracker(BallTrackerInterface):
         if not contours:
             return None
 
+        # ★追加: 最小面積フィルタ（ノイズ除去）
+        # 高速ボールでもトラッキング可能
+        min_area = 100   # ピクセル単位
+        contours = [c for c in contours if cv2.contourArea(c) >= min_area]
+        if not contours:
+            return None
+
         largest_contour = max(contours, key=cv2.contourArea)
         x, y, w, h = cv2.boundingRect(largest_contour)
 
