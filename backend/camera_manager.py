@@ -194,12 +194,8 @@ class CameraManager(CameraInterface):
             return 0.0
         # DepthAI の深度は uint16 (mm) なのでそのまま返す
         raw_depth = float(depth_frame[y, x])
-        # DepthAI が cm 単位を返す場合、mm に変換（自動判定）
-        if raw_depth > 5000:          # 実測距離上限の約2倍以上なら cm とみなす
-            corrected = raw_depth / 10.0   # cm → mm に変換
-            print(f"[DEBUG] Converting cm→mm: {raw_depth} -> {corrected} mm")
-            return corrected
-        print(f"[DEBUG] Raw depth (mm): {raw_depth} mm")
+        # DepthAI が mm 単位を返す前提（変換不要）
+        logging.debug(f"Raw depth (mm): {raw_depth} mm")
         return raw_depth
 
     def set_fps(self, fps: int) -> None:

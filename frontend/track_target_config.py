@@ -20,6 +20,7 @@ from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
 import cv2
 import numpy as np
+from common.logger import logger
 
 # 永続化設定ファイルのパス
 CONFIG_PATH = "TrackBallLogs/tracked_target_config.json"
@@ -92,11 +93,22 @@ class TrackTargetConfig(QWidget):
         hsv_layout.addWidget(QLabel("V (明度):"))
         hsv_layout.addWidget(self.v_slider)
 
+        # 最小面積スライダー
+        min_area_layout = QVBoxLayout()
+        min_area_layout.addWidget(QLabel("最小面積 (ピクセル)"))
+        self.min_area_slider = QSlider(Qt.Orientation.Horizontal)
+        self.min_area_slider.setMinimum(10)
+        self.min_area_slider.setMaximum(200)
+        self.min_area_slider.setValue(self.ball_tracker.min_area)
+        self.min_area_slider.valueChanged.connect(self.on_min_area_changed)
+        min_area_layout.addWidget(self.min_area_slider)
+
         # レイアウト設定
         main_layout = QVBoxLayout()
         main_layout.addWidget(self.video_label)
         main_layout.addLayout(button_layout)
         main_layout.addLayout(hsv_layout)
+        main_layout.addLayout(min_area_layout)
         self.setLayout(main_layout)
 
         # タイマーで映像を更新（120fps固定）
@@ -249,8 +261,20 @@ class TrackTargetConfig(QWidget):
         self.current_config["s_max"] = 255
         self.current_config["v_max"] = 255
 
+        # BallTracker に反映
+        lower_bound = np.array([self.current_config["h_min"], self.current_config["s_min"], self.current_config["v_min"]], dtype=np.uint8)
+        upper_bound = np.array([self.current_config["h_max"], self.current_config["s_max"], self.current_config["v_max"]], dtype=np.uint8)
+        self.ball_tracker.set_track_ball((lower_bound, upper_bound))
+
         self.config_changed.emit(self.current_config)
         self.persist_config()
+
+    def on_min_area_changed(self, value: int) -> None:
+        """最小面積スライダー変更時の処理"""
+        self.ball_tracker.set_min_area(value)
+        self.min_area_slider.setValue(value)
+        self.persist_config()
+        print(f"Min area set to {value} pixels")
 
     def on_mode_changed(self, mode: str) -> None:
         """カメラモード変更時の処理"""

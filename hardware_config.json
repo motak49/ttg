@@ -1,0 +1,7 @@
+{
+    "camera_resolution": "1920x1080",
+    "camera_fps": 120,
+    "calibration_data_path": "calibration_data.json",
+    "depth_stream_enabled": true,
+    "depth_output_size": "1920x1080"
+}

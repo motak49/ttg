@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from backend.screen_manager import ScreenManager
 
 from backend.interfaces import BallTrackerInterface
+from common.logger import logger
 
 
 class BallTracker(BallTrackerInterface):
@@ -19,6 +20,8 @@ class BallTracker(BallTrackerInterface):
         self.ball_history: List[Tuple[int, int]] = []
         # 設定ファイルのパスを定義
         self.config_file = "TrackBallLogs/tracked_ball_config.json"
+        # デフォルトの最小面積（ピクセル）※UI から変更可能にする
+        self.min_area: int = 30
         # 起動時に設定を読み込む
         self.load_config()
         # 衝突判定用内部状態
@@ -34,17 +37,26 @@ class BallTracker(BallTrackerInterface):
         Args:
             color (str): "赤" または "ピンク"
         """
-        # 色範囲の簡易定義（実際には適切なHSV範囲を使用してください）
+        # 赤系は Hue が 0‑10 と 160‑180 の二重範囲で扱い、Saturation/Value は
+        # デフォルト 100‑255 に設定。UI から調整可能にする
         if color == "赤":
-            lower = np.array([0, 100, 100], dtype=np.uint8)
-            upper = np.array([10, 255, 255], dtype=np.uint8)
+            self.tracked_ball = {
+                "type": "red_like",
+                "sat_low": 100,
+                "sat_high": 255,
+                "val_low": 100,
+                "val_high": 255
+            }
         elif color == "ピンク":
-            lower = np.array([140, 100, 100], dtype=np.uint8)
-            upper = np.array([170, 255, 255], dtype=np.uint8)
+            self.tracked_ball = {
+                "type": "pink_like",
+                "sat_low": 100,
+                "sat_high": 255,
+                "val_low": 100,
+                "val_high": 255
+            }
         else:
             raise ValueError("サポートされていない色です。'赤' または 'ピンク' を指定してください")
-        # set_track_ball に委譲して登録
-        self.set_track_ball((lower, upper))
 
     def set_track_ball(self, color_range: Tuple[NDArray[np.uint8], NDArray[np.uint8]]) -> bool:
         """
@@ -56,9 +68,15 @@ class BallTracker(BallTrackerInterface):
         Returns:
             bool: 登録成功時にTrueを返す
         """
+        # 色範囲だけでなく、Saturation と Value の閾値も保存しておくことで
+        # UI から動的に調整できるようにする
         self.tracked_ball = {
-            "color_range": color_range,
-            "type": "red_like"
+            "color_range": color_range,   # (lower, upper) は互換性のため残す
+            "type": "red_like",
+            "sat_low": 100,
+            "sat_high": 255,
+            "val_low": 100,
+            "val_high": 255
         }
         return True
 
@@ -82,8 +100,16 @@ class BallTracker(BallTrackerInterface):
 
         # カラー範囲を用いてボールを抽出
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        lower_bound, upper_bound = self.tracked_ball["color_range"]
-        mask = cv2.inRange(hsv, lower_bound, upper_bound)
+        # 赤色は Hue が 0‑10 と 160‑180 の二重範囲で扱う
+        lower1 = np.array([0,   self.tracked_ball["sat_low"],  self.tracked_ball["val_low"]], dtype=np.uint8)
+        upper1 = np.array([10,  self.tracked_ball["sat_high"], self.tracked_ball["val_high"]], dtype=np.uint8)
+
+        lower2 = np.array([160, self.tracked_ball["sat_low"],  self.tracked_ball["val_low"]], dtype=np.uint8)
+        upper2 = np.array([179, self.tracked_ball["sat_high"], self.tracked_ball["val_high"]], dtype=np.uint8)
+
+        mask1 = cv2.inRange(hsv, lower1, upper1)
+        mask2 = cv2.inRange(hsv, lower2, upper2)
+        mask  = cv2.bitwise_or(mask1, mask2)
 
         # マスクから輪郭を検出
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -92,8 +118,8 @@ class BallTracker(BallTrackerInterface):
 
         # ★追加: 最小面積フィルタ（ノイズ除去）
         # 高速ボールでもトラッキング可能
-        min_area = 100   # ピクセル単位
-        contours = [c for c in contours if cv2.contourArea(c) >= min_area]
+        # デフォルトは 30 に変更し、UI から調整可能に
+        contours = [c for c in contours if cv2.contourArea(c) >= self.min_area]
         if not contours:
             return None
 
@@ -173,7 +199,12 @@ class BallTracker(BallTrackerInterface):
             color_range = self.tracked_ball["color_range"]
             lower_bound, upper_bound = color_range
             config_data = {
-                "color": self._get_color_from_range(lower_bound, upper_bound)
+                "color": self._get_color_from_range(lower_bound, upper_bound),
+                "min_area": self.min_area,
+                "sat_low": self.tracked_ball["sat_low"],
+                "sat_high": self.tracked_ball["sat_high"],
+                "val_low": self.tracked_ball["val_low"],
+                "val_high": self.tracked_ball["val_high"]
             }
         else:
             config_data = {"color": None}
@@ -183,7 +214,8 @@ class BallTracker(BallTrackerInterface):
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(config_data, f, ensure_ascii=False, indent=4)
         except Exception as e:
-            print(f"設定保存エラー: {e}")
+            print(f"設定保存エラー: {e}")  # 一時的にprintに戻す
+            raise  # 再スローしてエラーを伝播
 
     def load_config(self) -> None:
         """ファイルからトラッキング対象の設定を読み込む"""
@@ -198,6 +230,13 @@ class BallTracker(BallTrackerInterface):
                 color = config_data.get("color")
                 if color is not None and color in ["赤", "ピンク"]:
                     self.set_target_color(color)
+                    # 設定ファイルから min_area と HSV を読み込む
+                    self.min_area = config_data.get("min_area", 30)
+                    if self.tracked_ball is not None and "sat_low" in config_data:
+                        self.tracked_ball["sat_low"] = config_data["sat_low"]
+                        self.tracked_ball["sat_high"] = config_data["sat_high"]
+                        self.tracked_ball["val_low"] = config_data["val_low"]
+                        self.tracked_ball["val_high"] = config_data["val_high"]
                 else:
                     # 設定が無効な場合は初期状態（赤）で設定
                     self.set_target_color("赤")
@@ -205,6 +244,29 @@ class BallTracker(BallTrackerInterface):
             print(f"設定読み込みエラー: {e}")
             # エラー発生時は初期状態（赤）で設定
             self.set_target_color("赤")
+
+    # -----------------------------------------------------------------
+    # UI から最小面積や HSV の閾値を変更できるようにするメソッド群
+    # -----------------------------------------------------------------
+    def set_min_area(self, area: int) -> None:
+        """検出対象の最小輪郭面積（ピクセル）を設定"""
+        self.min_area = max(1, area)
+
+    def set_hsv_limits(
+        self,
+        sat_low: int,
+        sat_high: int,
+        val_low: int,
+        val_high: int,
+    ) -> None:
+        """Saturation と Value の上下限を設定（0‑255）"""
+        if self.tracked_ball is not None:
+            self.tracked_ball.update({
+                "sat_low": max(0, min(255, sat_low)),
+                "sat_high": max(0, min(255, sat_high)),
+                "val_low": max(0, min(255, val_low)),
+                "val_high": max(0, min(255, val_high)),
+            })
 
     def _get_color_from_range(self, lower_bound: NDArray[np.uint8], upper_bound: NDArray[np.uint8]) -> str:
         """HSV範囲から色を判定する"""

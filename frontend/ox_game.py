@@ -93,12 +93,10 @@ class OxGame(QWidget):
         self.setLayout(layout)
 
         # タイマーでフレーム更新 & ヒット判定
-        self.tracking_active = False
+        self.tracking_active = True
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
-        if self._show_start_dialog():
-            self.tracking_active = True
-            self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 約30fps (config)
+        self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 約30fps (config)
 
     def _update_player_label(self) -> None:
         if self.current_player == 1:
@@ -301,7 +299,8 @@ class OxGame(QWidget):
             # 深度テキスト表示（青）
             painter.setPen(QPen(QColor(0, 0, 255), 1))
             painter.drawText(hx + 52, hy - 48, f"{hdepth:.2f}")
-
+            # 衝突座標をターミナルに出力
+            print(f"Hit at ({hx}, {hy})")
         # 最初にヒットした座標を塗りつぶしの青円で固定表示
         if self.first_hit_coord is not None:
             fx, fy = self.first_hit_coord

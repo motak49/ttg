@@ -1,6 +1,7 @@
 import json
 import os
-from typing import Optional
+import logging
+from typing import Optional, List, Tuple, Dict, Any
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -15,8 +16,9 @@ from common.config import TRACK_TARGET_CONFIG_FPS, timer_interval_ms
 from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 
-# 深度ログファイルのパス（既存のものを利用）
-DEPTH_LOG_PATH = "ScreenDepthLogs/depth_log.json"
+# 深度ログファイルのパス（プロジェクトルートからの絶対パスに変更）
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))   # frontend の親ディレクトリ (ttg)
+DEPTH_LOG_PATH = os.path.join(BASE_DIR, "ScreenDepthLogs", "depth_log.json")
 
 
 class DepthConfig(QWidget):
@@ -74,7 +76,7 @@ class DepthConfig(QWidget):
         self.timer.start(timer_interval_ms(TRACK_TARGET_CONFIG_FPS))  # 約120fps (config)
 
         # クリックされた座標リスト
-        self.click_points = []
+        self.click_points: List[Tuple[int, int]] = []
         # フレームと表示サイズの情報（座標変換用）
         self._frame_width = 0
         self._frame_height = 0
@@ -203,7 +205,7 @@ class DepthConfig(QWidget):
         for y in range(0, height, grid_size):
             painter.drawLine(0, y, width, y)
 
-    def on_video_click(self, event: QMouseEvent) -> None:
+    def on_video_click(self, event: Optional[QMouseEvent] = None) -> None:
         """映像上でのクリック処理"""
         # QLabel 内の座標に変換
         label_pos = self.video_label.mapFromGlobal(event.globalPosition().toPoint())
@@ -266,30 +268,40 @@ class DepthConfig(QWidget):
             self.depth_label.setText("Depth: Error")
 
     def save_depths(self) -> None:
-        """クリックされた座標と深度をログファイルに保存"""
+        """クリックされた座標の深度をログファイルに保存（X,Y は保存しない）"""
         if not self.click_points:
             return
 
         try:
-            # 既存ログを読み込み
-            log_data = []
-            if os.path.exists(DEPTH_LOG_PATH):
-                with open(DEPTH_LOG_PATH, "r", encoding="utf-8") as f:
-                    log_data = json.load(f)
+            # 最後にクリックした画像座標 (フレーム座標)
+            img_x, img_y = self.click_points[-1]
 
-            # 新しいデータを追加
-            for x, y in self.click_points:
-                depth_mm = self.camera_manager.get_depth_at(x, y)
-                log_data.append({
-                    "x": x,
-                    "y": y,
-                    "depth_mm": round(depth_mm, 1)
-                })
+            # 深度フレームサイズが取得できているか確認
+            if self._depth_width > 0 and self._depth_height > 0:
+                # フレーム → 深度フレームのスケール変換
+                depth_scale_x = self._depth_width / self._frame_width
+                depth_scale_y = self._depth_height / self._frame_height
+                depth_x = int(img_x * depth_scale_x)
+                depth_y = int(img_y * depth_scale_y)
 
-            # ファイルに書き込み
+                # 範囲外アクセス防止（クランプ）
+                depth_x = max(0, min(self._depth_width - 1, depth_x))
+                depth_y = max(0, min(self._depth_height - 1, depth_y))
+
+                depth_mm = self.camera_manager.get_depth_at(depth_x, depth_y)
+            else:
+                # 深度フレーム取得失敗時は画像座標で取得（フォールバック）
+                depth_mm = self.camera_manager.get_depth_at(img_x, img_y)
+
+            # デバッグ出力（ターミナルに表示させるだけ）
+            logging.debug(f"保存対象深度: ({depth_x if self._depth_width>0 else img_x}, "
+                          f"{depth_y if self._depth_height>0 else img_y}) -> {depth_mm:.1f} mm")
+
+            # 単一値で保存（辞書形式） - screen_depth キーに統一
+            data = {"screen_depth": round(depth_mm, 1)}
             os.makedirs(os.path.dirname(DEPTH_LOG_PATH), exist_ok=True)
             with open(DEPTH_LOG_PATH, "w", encoding="utf-8") as f:
-                json.dump(log_data, f, ensure_ascii=False, indent=4)
+                json.dump(data, f, ensure_ascii=False, indent=4)
 
             print("深度ログが保存されました。")
             self.click_points.clear()  # 保存後はクリア

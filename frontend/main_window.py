@@ -85,6 +85,11 @@ class MainWindow(QMainWindow):
         ox_game_btn.clicked.connect(self.start_ox_game)  # type: ignore
         button_layout.addWidget(ox_game_btn)
 
+        # QML版 OXゲーム 起動ボタン
+        ox_game_qml_btn = QPushButton("OXゲーム (QML版)")
+        ox_game_qml_btn.clicked.connect(self.start_ox_game_qml)  # type: ignore
+        button_layout.addWidget(ox_game_qml_btn)
+
         layout.addLayout(button_layout)
 
         # バックエンドコンポーネントの初期化
@@ -242,6 +247,18 @@ class MainWindow(QMainWindow):
                 return
         self.ox_game_window = OxGame(self.camera_manager, self.screen_manager, self.ball_tracker)
         self.ox_game_window.show()
+
+    def start_ox_game_qml(self) -> None:
+        """メインメニューから QML 版 OX ゲームを開始する"""
+        if not self.camera_manager.is_initialized():
+            if not self.camera_manager.initialize_camera():
+                QMessageBox.critical(
+                    self, "カメラエラー", "カメラの初期化に失敗しました。"
+                )
+                return
+        from frontend.ox_game_qml import OxGameQML
+        self.ox_game_qml_window = OxGameQML()
+        self.ox_game_qml_window.show()
 
     # -------------------------------------------------
     # ウィンドウクローズ時処理
