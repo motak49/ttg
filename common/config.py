@@ -12,8 +12,14 @@ TARGET_FPS = OX_GAME_TARGET_FPS
 
 # TrackTargetConfig 用フレームレート（約120fps）
 TRACK_TARGET_CONFIG_FPS = 120
-GRID_LINE_WIDTH = 20  # 線幅 (ピクセル) – デフォルトは 2px から変更
+GRID_LINE_WIDTH = 20  # 線幅 (ピクセル) ? デフォルトは 2px から変更
 TIMER_INTERVAL_MS = int(1000 / TARGET_FPS)
+
+# 衝突判定用深度閾値（メートル単位、スクリーン前面からの距離）
+COLLISION_DEPTH_THRESHOLD = 0.15   # 例: 150mm (= 15cm)
+
+# 深度測定の有効範囲上限（mm）
+MAX_VALID_DEPTH_MM = 5000   # 例: 5m までを有効とみなす
 
 
 def timer_interval_ms(fps: int) -> int:

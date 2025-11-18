@@ -226,9 +226,9 @@ class DepthConfig(QWidget):
         scale_x = self._frame_width / self._displayed_width
         scale_y = self._frame_height / self._displayed_height
 
-        # 元フレーム座標に変換
-        img_x = int(x_rel * scale_x)
-        img_y = int(y_rel * scale_y)
+        # 元フレーム座標に変換（丸め誤差を減らすため float で計算後 int に変換）
+        img_x = int(round(x_rel * scale_x))
+        img_y = int(round(y_rel * scale_y))
 
         # 座標をフレーム範囲内にクランプ（端のピクセルが範囲外になる問題を回避）
         img_x = max(0, min(self._frame_width - 1, img_x))
@@ -252,14 +252,14 @@ class DepthConfig(QWidget):
                 depth_y = max(0, min(self._depth_height - 1, depth_y))
                 print(f"[DEBUG] Converted depth point: ({depth_x}, {depth_y})")
                 # 生の深度値を取得し、表示前に確認
-                raw_depth = self.camera_manager.get_depth_at(depth_x, depth_y)
-                print(f"[DEBUG] Raw depth value: {raw_depth} mm")
+                raw_depth = self.camera_manager.get_depth_mm(depth_x, depth_y)
+                print(f"[DEBUG] Raw depth (mm): {raw_depth} mm")
                 # 補正なし（統一されたロジック）
                 depth_mm = raw_depth
-                print(f"[DEBUG] Final depth (no correction): {depth_mm:.1f} mm")
+                print(f"[DEBUG] Final depth (mm): {depth_mm:.1f} mm")
             else:
                 # 深度フレームが取得できない場合は元の座標を使用
-                raw_depth = self.camera_manager.get_depth_at(img_x, img_y)
+                raw_depth = self.camera_manager.get_depth_mm_at(img_x, img_y)
                 print(f"[DEBUG] Raw depth value (fallback): {raw_depth} mm")
                 depth_mm = raw_depth  # 補正なし
             self.depth_label.setText(f"Depth: {depth_mm:.1f} mm")
@@ -288,7 +288,18 @@ class DepthConfig(QWidget):
                 depth_x = max(0, min(self._depth_width - 1, depth_x))
                 depth_y = max(0, min(self._depth_height - 1, depth_y))
 
-                depth_mm = self.camera_manager.get_depth_at(depth_x, depth_y)
+                depth_mm = self.camera_manager.get_depth_mm_at(depth_x, depth_y)
+                # 無効深度値（0 または NaN）を除外し、表示と保存をスキップ
+                if not depth_mm or depth_mm <= 0:
+                    print(f"[WARN] Invalid depth value detected: {depth_mm} mm. Skipping.")
+                    self.depth_label.setText("Depth: N/A")
+                    return
+                # 深度が上限を超える場合は無効とみなす
+                from common.config import MAX_VALID_DEPTH_MM
+                if depth_mm > MAX_VALID_DEPTH_MM:
+                    print(f"[WARN] Depth value exceeds limit ({MAX_VALID_DEPTH_MM} mm). Skipping.")
+                    self.depth_label.setText("Depth: N/A")
+                    return
             else:
                 # 深度フレーム取得失敗時は画像座標で取得（フォールバック）
                 depth_mm = self.camera_manager.get_depth_at(img_x, img_y)

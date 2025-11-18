@@ -180,9 +180,9 @@ class CameraManager(CameraInterface):
             logging.error(f"深度フレーム取得エラー: {e}")
             return None
 
-    def get_depth_at(self, x: int, y: int) -> float:
+    def get_depth_mm(self, x: int, y: int) -> float:
         """
-        (x, y) のピクセル座標に対する深度を mm 単位で返す。
+        (x, y) のピクセル座標に対する深度を mm 単位で返す（DepthAI 出力は既に mm）。
         取得できない場合は 0.0 を返す（呼び出し側でエラーハンドリング）。
         """
         depth_frame = self.get_depth_frame()
@@ -192,10 +192,33 @@ class CameraManager(CameraInterface):
         h, w = depth_frame.shape
         if not (0 <= x < w and 0 <= y < h):
             return 0.0
-        # DepthAI の深度は uint16 (mm) なのでそのまま返す
+        # DepthAI の depth ストリームは既に mm 単位（uint16）
+        depth_mm = float(depth_frame[y, x])
+        logging.debug(f"[DEBUG] Raw depth (mm): {depth_mm} mm")
+        return depth_mm
+
+    def get_depth_mm_at(self, x: int, y: int) -> float:
+        """
+        (x, y) のピクセル座標に対する深度を mm 単位で返す（互換性維持）。
+        取得できない場合は 0.0 を返す（呼び出し側でエラーハンドリング）。
+        """
+        return self.get_depth_mm(x, y)
+
+    def get_depth_at(self, x: int, y: int) -> float:
+        """
+        (x, y) のピクセル座標に対する深度を **視差** 単位で返す（互換性維持）。
+        取得できない場合は 0.0 を返す（呼び出し側でエラーハンドリング）。
+        """
+        depth_frame = self.get_depth_frame()
+        if depth_frame is None:
+            return 0.0
+        # 範囲チェック
+        h, w = depth_frame.shape
+        if not (0 <= x < w and 0 <= y < h):
+            return 0.0
+        # DepthAI の深度は uint16 (mm) なのでそのまま返す（互換性維持）
         raw_depth = float(depth_frame[y, x])
-        # DepthAI が mm 単位を返す前提（変換不要）
-        logging.debug(f"Raw depth (mm): {raw_depth} mm")
+        logging.debug(f"Raw depth (disparity): {raw_depth} disparity")
         return raw_depth
 
     def set_fps(self, fps: int) -> None:

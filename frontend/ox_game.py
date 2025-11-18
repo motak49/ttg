@@ -130,8 +130,6 @@ class OxGame(QWidget):
             # プレイヤー交代
             self.current_player = 2 if self.current_player == 1 else 1
             self._update_player_label()
-            msg_text = "プレーヤー②に交代します" if self.current_player == 2 else "プレーヤー①に交代します"
-            self._show_turn_change_message(msg_text)
 
     def _draw_markers(self, painter: QPainter, cell_w: int, cell_h: int) -> None:
         """盤面上のマーカー (〇/✕) を描画"""
@@ -197,21 +195,18 @@ class OxGame(QWidget):
             self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))
             self.collision_shown = False
 
-    def _show_turn_change_message(self, text: str) -> None:
-        """2秒間メッセージ表示し、トラッキングを一時停止→再開する"""
+
+    def _show_collision_stop_message(self) -> None:
+        """衝突検知時にゲームを停止し、OK が押されるまで待機する"""
         self.pause_tracking()
         msg = QMessageBox(self)
-        msg.setWindowTitle("")
-        msg.setText(text)
-        msg.setStandardButtons(QMessageBox.StandardButton.NoButton)
-        msg.setWindowModality(Qt.WindowModality.NonModal)  # 非モーダルに変更
-        msg.show()
-        QTimer.singleShot(2000, lambda: self._close_turn_message(msg))
-
-    def _close_turn_message(self, msg: QMessageBox) -> None:
-        """メッセージを閉じ、トラッキングを再開する"""
-        msg.close()
-        self.resume_tracking()
+        msg.setWindowTitle("衝突検知")
+        msg.setText("ターゲットが衝突しました。続行するには OK を押してください。")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        # exec() はモーダルでブロックし、ユーザーの操作を待つ
+        msg.exec()
+        # OK 押下後1秒スリープ
+        QTimer.singleShot(1000, self.resume_tracking)
 
     def _update_frame(self) -> None:
         """カメラフレーム取得 → UI 更新 + ヒット判定"""
@@ -301,6 +296,10 @@ class OxGame(QWidget):
             painter.drawText(hx + 52, hy - 48, f"{hdepth:.2f}")
             # 衝突座標をターミナルに出力
             print(f"Hit at ({hx}, {hy})")
+            # 衝突座標を保持
+            self.last_collision_point = (hx, hy)
+            # 衝突検知時にゲーム停止 → OK ボタンで再開
+            self._show_collision_stop_message()
         # 最初にヒットした座標を塗りつぶしの青円で固定表示
         if self.first_hit_coord is not None:
             fx, fy = self.first_hit_coord
@@ -330,6 +329,10 @@ class OxGame(QWidget):
             self.fps_label.setText(f"FPS: {OX_GAME_TARGET_FPS} (実測: {actual_fps:.1f})")
             self.frame_count = 0
             self.last_time.restart()
+
+    def get_last_collision_point(self) -> Optional[Tuple[int, int]]:
+        """直近の衝突座標を返す。衝突が無い場合は None を返す。"""
+        return self.last_collision_point
 
     def closeEvent(self, a0: Optional[QCloseEvent] = None) -> None:
         """ウィンドウ閉じるときにタイマー停止・カメラ解放"""

@@ -28,6 +28,10 @@ class BallTracker(BallTrackerInterface):
         self._last_center: Optional[Tuple[int, int]] = None
         self._prev_center: Optional[Tuple[int, int]] = None
         self._last_reached_coord: Optional[Tuple[int, int, float]] = None
+        # 衝突状態管理
+        self._collision_state: str = "none"   # "none", "hit_front", "falling"
+        self._depth_at_hit: Optional[float] = None
+        self._prev_depth: Optional[float] = None
 
     def set_target_color(self, color: str) -> None:
         """
@@ -143,6 +147,8 @@ class BallTracker(BallTrackerInterface):
         1. ポリゴン内部または境界上にあるか cv2.pointPolygonTest で判定
         2. 条件 A が false の場合、軌道変化角度が大きく、ポリゴン境界付近 (距離 <= DIST_TOLERANCE) ならヒットとみなす。
         """
+        from common.config import COLLISION_DEPTH_THRESHOLD
+
         result = self.detect_ball(frame)
         if result is None:
             return None
@@ -181,10 +187,33 @@ class BallTracker(BallTrackerInterface):
         self._prev_center = self._last_center
         self._last_center = (x, y)
 
+        # 衝突状態管理
         if hit_detected:
-            self._last_reached_coord = (x, y, depth)
-            return self._last_reached_coord
-        return None
+            # 1. 初回ヒット時 → 状態を "hit_front" に変更
+            if self._collision_state == "none":
+                self._collision_state = "hit_front"
+                self._depth_at_hit = depth
+                self._prev_depth = depth
+                self._last_reached_coord = (x, y, depth)
+                return self._last_reached_coord
+            # 2. 落下中 → 深度が閾値に到達したか確認
+            elif self._collision_state == "hit_front":
+                # 深度が設定閾値以下になるまで待機
+                if depth <= COLLISION_DEPTH_THRESHOLD:
+                    self._collision_state = "none"  # 状態リセット
+                    return (x, y, depth)  # 最終的なヒット座標を返す
+                else:
+                    # 落下中 → ヒットしない（次フレームで再度判定）
+                    return None
+            else:
+                # その他の状態 → 通常通り処理
+                self._last_reached_coord = (x, y, depth)
+                return self._last_reached_coord
+        else:
+            # 検出が失敗した場合、状態をリセット
+            if self._collision_state != "none":
+                self._collision_state = "none"
+            return None
 
     def get_last_reached_coord(self) -> Optional[Tuple[int, int, float]]:
         """外部から最新のヒット座標と深度を取得"""
