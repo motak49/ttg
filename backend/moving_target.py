@@ -2,7 +2,7 @@
 動くターゲットの実装モジュール
 """
 
-import random
+import secrets
 from typing import Tuple
 from dataclasses import dataclass
 
@@ -61,9 +61,9 @@ class MovingTarget:
 
         # 斜め移動保証：速度が0になった場合は再設定
         if dx == 0:
-            dx = random.choice([i for i in range(-5, 6) if i != 0])
+            dx = secrets.choice([i for i in range(-5, 6) if i != 0])
         if dy == 0:
-            dy = random.choice([i for i in range(-5, 6) if i != 0])
+            dy = secrets.choice([i for i in range(-5, 6) if i != 0])
 
         # デバッグロギング（テスト完了後に削除予定）
         import logging

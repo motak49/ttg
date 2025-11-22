@@ -2,7 +2,7 @@
 動くターゲットの管理モジュール
 """
 
-import random
+import secrets
 import logging
 from typing import List, Tuple
 from backend.moving_target import MovingTarget
@@ -63,24 +63,24 @@ class MovingTargetManager:
         # 初期位置を設定
         if initial_position is None:
             xmin, xmax, ymin, ymax = self.bounds
-            x = random.randint(xmin, xmax - 100)  # 100pxは画像サイズ
-            y = random.randint(ymin, ymax - 100)
+            x = secrets.randbelow(xmax - xmin - 100) + xmin  # 100pxは画像サイズ
+            y = secrets.randbelow(ymax - ymin - 100) + ymin
         else:
             x, y = initial_position
             
         # 初期速度をランダムに設定（速度レベルに応じて範囲変更）
         speed_map = {1: 2, 2: 4, 3: 6, 4: 8, 5: 10}
         max_speed = speed_map.get(speed_level, 6)  # デフォルトはレベル3
-        dx = random.randint(-max_speed, max_speed)
-        dy = random.randint(-max_speed, max_speed)
+        dx = secrets.randbelow(2 * max_speed + 1) - max_speed
+        dy = secrets.randbelow(2 * max_speed + 1) - max_speed
         
         # ゼロ除算回避（斜め移動保証）
         if dx == 0 and dy == 0:
             dx = 1
         elif dx == 0:
-            dx = random.choice([i for i in range(-max_speed, max_speed+1) if i != 0])
+            dx = secrets.choice([i for i in range(-max_speed, max_speed+1) if i != 0])
         elif dy == 0:
-            dy = random.choice([i for i in range(-max_speed, max_speed+1) if i != 0])
+            dy = secrets.choice([i for i in range(-max_speed, max_speed+1) if i != 0])
             
         target = MovingTarget(
             image_path=image_path,

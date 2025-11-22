@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import json
 import os
+import time
 from typing import Tuple, Optional, Dict, Any, List
 from numpy.typing import NDArray
 from backend.screen_manager import ScreenManager
@@ -20,6 +21,8 @@ class BallTracker(BallTrackerInterface):
         self.ball_history: List[Tuple[int, int]] = []
         # 設定ファイルのパスを定義
         self.config_file = "TrackBallLogs/tracked_ball_config.json"
+        # タイムスタンプを更新
+        self.last_reached_timestamp = time.time()
         # デフォルトの最小面積（ピクセル）※UI から変更可能にする
         self.min_area: int = 30
         # 起動時に設定を読み込む

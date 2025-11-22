@@ -1,7 +1,4 @@
 # track_target_viewer.py
-import sys
-from typing import List, Tuple, Optional
-
 from PyQt6.QtWidgets import (
     QApplication,
     QWidget,
@@ -10,10 +7,9 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QPushButton,
     QHBoxLayout,
-    QMessageBox,
 )
-from PyQt6.QtCore import Qt, QTimer, QPointF
-from PyQt6.QtGui import QMouseEvent, QPainter, QColor, QPen, QImage, QPixmap, QPolygonF, QBrush
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPainter, QColor, QPen, QImage, QPixmap
 from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
@@ -174,8 +170,8 @@ class TrackTargetViewer(QWidget):
             try:
                 if 'painter' in locals() and painter.isActive():
                     painter.end()
-            except:
-                pass
+            except Exception as e:
+                print(f"エラーが発生しました: {e}")
             return
 
     def _get_color_name_from_range(self, lower_bound: np.ndarray, upper_bound: np.ndarray) -> str:
@@ -226,27 +222,16 @@ class TrackTargetViewer(QWidget):
         except Exception as e:
             print(f"ハイライト表示エラー: {e}")
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0) -> None:
         """ウィンドウを閉じる際の処理"""
         # タイマーを停止
         if hasattr(self, 'timer') and self.timer.isActive():
             self.timer.stop()
         
-        # 描画処理が完了するまで待機（タイムアウト付き）
-        try:
-            import time
-            start_time = time.time()
-            # ウィンドウが閉じられる前に、すべての描画処理を安全に終了
-            while self.isVisible() and (time.time() - start_time) < 2:  # 2秒間待機
-                QApplication.processEvents()  # Qtイベントを処理
-                time.sleep(0.01)
-        except Exception as e:
-            print(f"クローズ待機エラー: {e}")
-        
         # クローズ処理を安全に実行
         try:
-            super().closeEvent(event)
+            super().closeEvent(a0)
         except Exception as e:
             print(f"クローズ処理エラー: {e}")
             # 例外が発生しても強制的にクローズ
-            event.accept()
+            a0.accept()
