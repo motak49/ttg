@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QMessageBox,
     QInputDialog,
+    QDialog,
 )
 from PyQt6.QtGui import QCloseEvent
 from backend.camera_manager import CameraManager
@@ -17,6 +18,7 @@ from backend.screen_manager import ScreenManager
 from frontend.game_area import GameArea
 from frontend.ox_game import OxGame
 from backend.ball_tracker import BallTracker
+from backend.moving_target_manager import MovingTargetManager
 
 from frontend.track_target_viewer import TrackTargetViewer
 from frontend.track_target_config import TrackTargetConfig
@@ -74,6 +76,11 @@ class MainWindow(QMainWindow):
         track_target_config_btn.clicked.connect(self.show_track_target_config)  # type: ignore
         button_layout.addWidget(track_target_config_btn)
 
+        # 動くターゲット登録ボタン
+        register_moving_target_btn = QPushButton("動くターゲット登録")
+        register_moving_target_btn.clicked.connect(self.show_register_moving_target)  # type: ignore
+        button_layout.addWidget(register_moving_target_btn)
+
         # 横線（区切り）
         separator = QPushButton("")
         separator.setFixedHeight(10)
@@ -90,6 +97,11 @@ class MainWindow(QMainWindow):
         ox_game_qml_btn.clicked.connect(self.start_ox_game_qml)  # type: ignore
         button_layout.addWidget(ox_game_qml_btn)
 
+        # 動く何かを狙え！ボタン
+        moving_targets_btn = QPushButton("動く何かを狙え！")
+        moving_targets_btn.clicked.connect(self.show_moving_targets)  # type: ignore
+        button_layout.addWidget(moving_targets_btn)
+
         layout.addLayout(button_layout)
 
         # バックエンドコンポーネントの初期化
@@ -97,6 +109,9 @@ class MainWindow(QMainWindow):
         self.screen_manager = ScreenManager()
         self.ball_tracker = BallTracker(self.screen_manager)
         external_api.set_ball_tracker(self.ball_tracker)
+        self.moving_target_manager = MovingTargetManager(self.screen_manager)
+        # 移動範囲を読み込む（初期化時に領域設定がされていないとエラーになるため）
+        self.moving_target_manager.load_bounds()
 
         # キャリブレーションデータをロード
         try:
@@ -256,9 +271,17 @@ class MainWindow(QMainWindow):
                     self, "カメラエラー", "カメラの初期化に失敗しました。"
                 )
                 return
-        from frontend.ox_game_qml import OxGameQML
-        self.ox_game_qml_window = OxGameQML()
-        self.ox_game_qml_window.show()
+        # QML版が存在しない場合、警告を表示して処理を終了
+        try:
+            from frontend.ox_game_qml import OxGameQML
+            self.ox_game_qml_window = OxGameQML()
+            self.ox_game_qml_window.show()
+        except ImportError:
+            QMessageBox.warning(
+                self,
+                "警告",
+                "QML版 OXゲームが利用できません。ファイルが存在しません。"
+            )
 
     # -------------------------------------------------
     # ウィンドウクローズ時処理
@@ -308,6 +331,36 @@ class MainWindow(QMainWindow):
             self.camera_manager, self.screen_manager, self.ball_tracker
         )
         self.track_target_config.show()
+        
+    # -------------------------------------------------
+    # 動くターゲット登録機能
+    # -------------------------------------------------
+    def show_register_moving_target(self) -> None:
+        """動くターゲットを登録するダイアログを開く"""
+        from frontend.moving_target_registration import MovingTargetRegistrationDialog
+        dialog = MovingTargetRegistrationDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # 登録成功後、デフォルトターゲットを追加（速度レベル3）
+            default_image = "assets/targets/b289f0a3-71c2-400f-81fd-756aced33ac1.png"
+            self.moving_target_manager.add_target(default_image, speed_level=3)
+        
+    # -------------------------------------------------
+    # 動くターゲット表示機能
+    # -------------------------------------------------
+    def show_moving_targets(self) -> None:
+        """動くターゲットを表示するウィンドウを開く"""
+        if not self.camera_manager.is_initialized():
+            QMessageBox.critical(
+                self,
+                "カメラエラー",
+                "カメラが接続されていません。まずアプリを起動してください。",
+            )
+            return
+        from frontend.moving_target_viewer import MovingTargetViewer
+        self.moving_target_viewer = MovingTargetViewer(
+            self.camera_manager, self.screen_manager, self.ball_tracker
+        )
+        self.moving_target_viewer.show()
 
 
 def main() -> None:

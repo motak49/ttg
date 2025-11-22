@@ -219,6 +219,12 @@ class BallTracker(BallTrackerInterface):
         """外部から最新のヒット座標と深度を取得"""
         return self._last_reached_coord
 
+    def get_last_detected_position(self) -> Optional[Tuple[int, int]]:
+        """最後に検出したボールの座標(x, y)を取得"""
+        if self._last_center is not None:
+            return self._last_center
+        return None
+
     def save_config(self) -> None:
         """トラッキング対象の設定をファイルに保存する"""
         # 設定データを取得

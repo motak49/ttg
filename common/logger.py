@@ -1,7 +1,7 @@
 # logger.py
 import json
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 class Logger:
     """ログ出力クラス"""
@@ -53,5 +53,18 @@ class Logger:
         except Exception as e:
             print(f"ログ出力エラー: {e}")
 
+    def info(self, message: str) -> None:
+        print(f"[INFO] {message}")
+
+    def warning(self, message: str) -> None:
+        print(f"[WARNING] {message}")
+
+    def error(self, message: str) -> None:
+        print(f"[ERROR] {message}")
+
 # グローバルな Logger インスタンス
 logger = Logger()
+
+def get_logger(name: str):
+    """Return a logger instance (currently returns the global logger)."""
+    return logger
