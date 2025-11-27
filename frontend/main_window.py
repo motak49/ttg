@@ -19,6 +19,8 @@ from frontend.game_area import GameArea
 from frontend.ox_game import OxGame
 from backend.ball_tracker import BallTracker
 from backend.moving_target_manager import MovingTargetManager
+from common.services import ServiceContainer
+from common.hit_detection import FrontCollisionDetector
 
 from frontend.track_target_viewer import TrackTargetViewer
 from frontend.track_target_config import TrackTargetConfig
@@ -104,12 +106,14 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(button_layout)
 
-        # バックエンドコンポーネントの初期化
-        self.camera_manager = CameraManager()
-        self.screen_manager = ScreenManager()
-        self.ball_tracker = BallTracker(self.screen_manager)
+        # バックエンドコンポーネントの初期化はサービスコンテナに一元化
+        self.services = ServiceContainer()
+        self.camera_manager = self.services.get_camera_manager()
+        self.screen_manager = self.services.get_screen_manager()
+        self.front_detector = self.services.get_front_detector()
+        self.ball_tracker = self.services.get_ball_tracker()
         external_api.set_ball_tracker(self.ball_tracker)
-        self.moving_target_manager = MovingTargetManager(self.screen_manager)
+        self.moving_target_manager = self.services.get_moving_target_manager()
         # 移動範囲を読み込む（初期化時に領域設定がされていないとエラーになるため）
         self.moving_target_manager.load_bounds()
 
@@ -357,8 +361,9 @@ class MainWindow(QMainWindow):
             )
             return
         from frontend.moving_target_viewer import MovingTargetViewer
+        # 共有の前面衝突検知器を渡す
         self.moving_target_viewer = MovingTargetViewer(
-            self.camera_manager, self.screen_manager, self.ball_tracker
+            self.camera_manager, self.screen_manager, self.ball_tracker, front_detector=self.front_detector
         )
         self.moving_target_viewer.show()
 

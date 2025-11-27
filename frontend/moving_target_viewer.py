@@ -15,6 +15,7 @@ from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
 from backend.moving_target_manager import MovingTargetManager
+from common.hit_detection import FrontCollisionDetector
 import cv2
 from pathlib import Path
 import os
@@ -27,7 +28,8 @@ class MovingTargetViewer(QMainWindow):
         self,
         camera_manager: CameraManager,
         screen_manager: ScreenManager,
-        ball_tracker: BallTracker
+        ball_tracker: BallTracker,
+        front_detector=None,
     ):
         super().__init__()
         self.setWindowTitle("動くターゲット表示")
@@ -40,6 +42,12 @@ class MovingTargetViewer(QMainWindow):
         
         # 動くターゲット管理
         self.moving_target_manager = MovingTargetManager(screen_manager)
+
+        # 前面スクリーン衝突検知器（共通） — 外部から渡された検知器があればそれを使用
+        if front_detector is not None:
+            self.front_detector = front_detector
+        else:
+            self.front_detector = FrontCollisionDetector(screen_manager)
         
         # カメラフレーム表示用ラベル
         self.image_label = QLabel()
@@ -117,12 +125,19 @@ class MovingTargetViewer(QMainWindow):
             # 動くターゲットを更新
             self.moving_target_manager.update_all()
             
-            # ボール位置を取得して衝突判定
+            # ボール位置を取得して、動くターゲットへの当たり判定
             ball_pos = self.ball_tracker.get_last_detected_position()
             if ball_pos is not None:
                 collisions = self.moving_target_manager.check_ball_collision(ball_pos)
                 if collisions:
                     QMessageBox.information(self, "当たり！", "ボールがターゲットに当たった！")
+
+            # 前面スクリーンへの衝突判定（深度を含む検出結果で判定）
+            detected = self.ball_tracker.get_hit_area(frame)
+            hit = self.front_detector.update_and_check(detected)
+            if hit is not None:
+                # 前面スクリーンに当たった場合の表示/処理
+                QMessageBox.information(self, "衝突検知", "前面スクリーンに衝突しました！")
             
             # フレームにターゲットを描画
             annotated_frame = self._draw_targets(frame)

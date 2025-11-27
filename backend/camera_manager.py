@@ -6,6 +6,13 @@ import depthai as dai
 from PyQt6.QtCore import Qt
 
 from backend.interfaces import CameraInterface
+from backend.depthai_compat import (
+    create_node,
+    create_xlinkout,
+    create_device,
+    get_output_queue,
+    safe_link,
+)
 
 
 class CameraManager(CameraInterface):
@@ -39,36 +46,48 @@ class CameraManager(CameraInterface):
             self.pipeline = dai.Pipeline()
 
             # カラーカメラ設定（単一カラーカメラ）
-            color_cam = self.pipeline.createColorCamera()
+            color_cam = create_node(self.pipeline, dai.node.ColorCamera, legacy_name='createColorCamera')
             # 解像度は 1920x1080 (DepthAI がサポートする最大解像度)
             color_cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
             # FPS 設定
             color_cam.setFps(self.fps)
 
             # カラーデータを BGR 順序で取得（OpenCV 互換）
-            color_cam.setInterleaved(False)
-            color_cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+            try:
+                color_cam.setInterleaved(False)
+            except Exception:
+                pass
+            try:
+                color_cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+            except Exception:
+                pass
 
             # プレビュー出力の作成
-            preview_xout = self.pipeline.createXLinkOut()
+            preview_xout = create_xlinkout(self.pipeline)
             preview_xout.setStreamName("preview")
-            color_cam.video.link(preview_xout.input)
+            # 安全にリンクを試みる
+            safe_link(color_cam, preview_xout, src_candidates=['video', 'preview', 'out'], dst_candidates=['input'])
 
             # ----- ステレオ深度ストリームの構築 -----
-            mono_left = self.pipeline.createMonoCamera()
-            mono_right = self.pipeline.createMonoCamera()
+            mono_left = create_node(self.pipeline, dai.node.MonoCamera, legacy_name='createMonoCamera')
+            mono_right = create_node(self.pipeline, dai.node.MonoCamera, legacy_name='createMonoCamera')
             mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
             mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
             mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
             mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 
-            stereo = self.pipeline.createStereoDepth()
-            stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+            stereo = create_node(self.pipeline, dai.node.StereoDepth, legacy_name='createStereoDepth')
+            try:
+                stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+            except Exception:
+                pass
 
             # 深度出力サイズをカラーフレーム解像度に合わせる（1920x1080）
-            # これにより深度フレームとカラー画像の解像度が一致し、座標変換誤差を減らす
             color_width, color_height = 1920, 1080
-            stereo.setOutputSize(color_width, color_height)
+            try:
+                stereo.setOutputSize(color_width, color_height)
+            except Exception:
+                pass
 
             # キャリブレーションデータを適用（あれば）
             if self.calibration_data is not None:
@@ -102,20 +121,24 @@ class CameraManager(CameraInterface):
                 except KeyError as e:
                     logging.warning(f"キャリブレーションデータ不足: {e}")
 
-            mono_left.out.link(stereo.left)
-            mono_right.out.link(stereo.right)
+            # リンク処理も安全に行う
+            safe_link(mono_left, stereo, src_candidates=['out'], dst_candidates=['left', 'inputLeft'])
+            safe_link(mono_right, stereo, src_candidates=['out'], dst_candidates=['right', 'inputRight'])
 
-            depth_xout = self.pipeline.createXLinkOut()
+            depth_xout = create_xlinkout(self.pipeline)
             depth_xout.setStreamName("depth")
-            stereo.depth.link(depth_xout.input)
+            safe_link(stereo, depth_xout, src_candidates=['depth', 'out'], dst_candidates=['input'])
 
-            # デバイス接続（DepthAI の Device は自動で開始される）
-            self.device = dai.Device(self.pipeline)
+            # デバイス接続（互換ヘルパーで生成）
+            self.device = create_device(self.pipeline)
 
-            # ストリーム取得
-            self.video_stream = self.device.getOutputQueue(name="preview")
+            # ストリーム取得（互換ラッパー）
             try:
-                self.depth_stream = self.device.getOutputQueue(name="depth")
+                self.video_stream = get_output_queue(self.device, 'preview')
+            except Exception:
+                self.video_stream = None
+            try:
+                self.depth_stream = get_output_queue(self.device, 'depth')
             except Exception as e:
                 logging.error(f"深度ストリーム取得エラー: {e}")
                 self.depth_stream = None  # 深度機能は無効化
