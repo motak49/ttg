@@ -243,10 +243,18 @@ class MainWindow(QMainWindow):
     def show_camera_start(self) -> None:
         """カメラ起動機能"""
         if not self.camera_manager.initialize_camera():
+            error_msg = (
+                "カメラの初期化に失敗しました。\n\n"
+                "以下をお試しください:\n"
+                "1. USB ケーブルを OAK-D から抜いて 10 秒待つ\n"
+                "2. USB ケーブルを再度接続\n"
+                "3. アプリケーションを再起動\n\n"
+                "詳細は TROUBLESHOOTING_JP.md を参照してください。"
+            )
             QMessageBox.critical(
                 self,
                 "カメラエラー",
-                "カメラの初期化に失敗しました。",
+                error_msg,
             )
             sys.exit(1)
         else:

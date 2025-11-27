@@ -96,7 +96,7 @@ class OxGame(QWidget):
         self.tracking_active = True
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
-        self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 約30fps (config)
+        self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 120fps（ハードウェア上限）(config)
 
     def _update_player_label(self) -> None:
         if self.current_player == 1:

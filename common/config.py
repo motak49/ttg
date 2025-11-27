@@ -4,13 +4,20 @@
 
 - 各 UI の目標フレームレート (FPS)
 - タイマー間隔 (ms) を FPS から計算するユーティリティ関数
+
+【FPS設定について】
+- DepthAI カメラのハードウェア上限: 120 FPS
+  （カラー・モノクロ両方で 120 FPS に対応）
+- スムーズな映像投影のため、最大値 120 FPS で統一設定
+- 実測値は backend/camera_manager.py で確認可能
+- 測定ツール: get_max_fps.py で再取得可能
 """
 
-# OxGame 用フレームレート（約120fps）
+# OxGame 用フレームレート（ハードウェア上限: 120fps）
 OX_GAME_TARGET_FPS = 120
 TARGET_FPS = OX_GAME_TARGET_FPS
 
-# TrackTargetConfig 用フレームレート（約120fps）
+# TrackTargetConfig 用フレームレート（ハードウェア上限: 120fps）
 TRACK_TARGET_CONFIG_FPS = 120
 GRID_LINE_WIDTH = 20  # 線幅 (ピクセル) ? デフォルトは 2px から変更
 TIMER_INTERVAL_MS = int(1000 / TARGET_FPS)

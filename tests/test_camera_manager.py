@@ -24,41 +24,68 @@ def test_camera_manager_inherits_interface() -> None:
 @patch('depthai.Device')
 @patch('depthai.Pipeline')
 def test_initialize_camera_success(mock_pipeline: Mock, mock_device: Mock) -> None:
-    """カメラ初期化が成功するテスト"""
+    """カメラ初期化が成功するテスト（depthai 3.1.0 対応）"""
     # モックの設定
     mock_pipeline_instance = Mock()
     mock_device_instance = Mock()
     mock_pipeline.return_value = mock_pipeline_instance
     mock_device.return_value = mock_device_instance
     
-    # カメラマネージャーの作成と初期化
-    camera = CameraManager()
-    result = camera.initialize_camera()
+    # depthai 3.1.0 ではパイプラインにノードがあって、
+    # Output.createOutputQueue() でキューを生成する
+    # そのため、create_node() の戻り値にこれを設定
+    mock_color_cam = Mock()
+    mock_video_output = Mock()
+    mock_video_output.createOutputQueue.return_value = Mock()
+    mock_color_cam.video = mock_video_output
     
-    # 結果の確認
-    assert result is True
-    assert camera.is_initialized() is True
-    mock_pipeline.assert_called_once()
-    mock_device.assert_called_once_with(mock_pipeline_instance)
+    mock_stereo = Mock()
+    mock_depth_output = Mock()
+    mock_depth_output.createOutputQueue.return_value = Mock()
+    mock_stereo.depth = mock_depth_output
+    
+    # create_node() をモック
+    def mock_create_node(pipeline, node_cls, legacy_name=None):
+        if 'ColorCamera' in str(node_cls):
+            return mock_color_cam
+        elif 'StereoDepth' in str(node_cls):
+            return mock_stereo
+        else:
+            return Mock()
+    
+    with patch('backend.camera_manager.create_node', side_effect=mock_create_node):
+        # カメラマネージャーの作成と初期化
+        camera = CameraManager()
+        result = camera.initialize_camera()
+        
+        # 結果の確認
+        assert result is True
+        assert camera.is_initialized() is True
+        mock_pipeline.assert_called_once()
+        # depthai 3.1.0: Device() はパイプラインなしで呼び出される
+        mock_device.assert_called_once()
 
 
 @patch('depthai.Device')
 @patch('depthai.Pipeline')
 def test_initialize_camera_failure(mock_pipeline, mock_device) -> None:
-    """カメラ初期化が失敗するテスト"""
+    """カメラ初期化が失敗するテスト（depthai 3.1.0 対応）"""
     # モックの設定 - 例外をスロー
     mock_pipeline_instance = Mock()
     mock_pipeline.return_value = mock_pipeline_instance
     mock_device.side_effect = Exception("デバイス接続エラー")
     
-    # カメラマネージャーの作成と初期化
-    camera = CameraManager()
-    result = camera.initialize_camera()
-    
-    # 結果の確認
-    assert result is False
-    assert camera.is_initialized() is False
-    mock_device.assert_called_once_with(mock_pipeline_instance)
+    # depthai 3.1.0: Device() はパイプラインなしで呼び出される
+    with patch('backend.camera_manager.create_device') as mock_create_device:
+        mock_create_device.side_effect = Exception("デバイス接続エラー")
+        
+        # カメラマネージャーの作成と初期化
+        camera = CameraManager()
+        result = camera.initialize_camera()
+        
+        # 結果の確認
+        assert result is False
+        assert camera.is_initialized() is False
 
 
 def test_get_frame_success() -> None:

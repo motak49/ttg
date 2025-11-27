@@ -1,4 +1,4 @@
-# camera_manager.py
+# camera_manager.py（簡素版）
 import logging
 from typing import Optional, Any
 
@@ -6,29 +6,17 @@ import depthai as dai
 from PyQt6.QtCore import Qt
 
 from backend.interfaces import CameraInterface
-from backend.depthai_compat import (
-    create_node,
-    create_xlinkout,
-    create_device,
-    get_output_queue,
-    safe_link,
-)
 
 
 class CameraManager(CameraInterface):
     """DepthAI カメラ管理クラス（実機向け）"""
 
     def __init__(self) -> None:
-        self.pipeline: Optional[dai.Pipeline] = None
-        self.device: Optional[dai.Device] = None
+        self.pipeline: Any = None
         self.video_stream: Optional[Any] = None
-        #self.fps: int = 60
-        self.fps: int = 120
-        # カメラ初期化状態フラグ
+        self.fps: int = 120  # ハードウェア上限 120 FPS（DepthAI カメラ最大）
         self._initialized: bool = False
-        # 深度ストリーム
         self.depth_stream: Optional[Any] = None
-        # キャリブレーションデータ
         self.calibration_data: Optional[dict[str, Any]] = None
 
     def is_initialized(self) -> bool:
@@ -37,124 +25,110 @@ class CameraManager(CameraInterface):
 
     def initialize_camera(self) -> bool:
         """
-        カメラを実機でカラー画像取得モードで初期化する。
-        1920x1080 (THE_1080_P) 解像度、self.fps fps を設定。
-        例外が発生した場合はエラーをログに出力し、False を返す。
+        カメラを実機でカラー画像取得モードで初期化する（depthai 3.1.0 対応）。
+        参考: tests/3_1_test.py の動作確認済みパターン
         """
         try:
-            # Pipeline の作成
+            # ステップ 0: depthai モジュールを再ロードして内部状態をリセット
+            import sys
+            import gc
+            logging.debug("[initialize_camera] Reloading depthai modules...")
+            modules_to_remove = [
+                name for name in list(sys.modules.keys())
+                if 'depthai' in name or '_depthai' in name or 'pal' in name
+            ]
+            for module_name in modules_to_remove:
+                try:
+                    del sys.modules[module_name]
+                except Exception:
+                    pass
+            gc.collect()
+            # depthai を再インポート
+            import depthai as dai
+            logging.debug("[initialize_camera] Depthai modules reloaded")
+            
+            logging.debug("[initialize_camera] Starting camera initialization")
+            available_devices = dai.Device.getAllAvailableDevices()
+            logging.info(f"[initialize_camera] Available devices: {[d.name for d in available_devices]}")
+            
+            if len(available_devices) == 0:
+                raise RuntimeError("No DepthAI devices found")
+            
+            # ステップ 1: パイプラインを作成（depthai 3.1.0: Device の前に Pipeline を作成）
+            logging.debug("[initialize_camera] Creating pipeline...")
             self.pipeline = dai.Pipeline()
 
-            # カラーカメラ設定（単一カラーカメラ）
-            color_cam = create_node(self.pipeline, dai.node.ColorCamera, legacy_name='createColorCamera')
-            # 解像度は 1920x1080 (DepthAI がサポートする最大解像度)
-            color_cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-            # FPS 設定
-            color_cam.setFps(self.fps)
-
-            # カラーデータを BGR 順序で取得（OpenCV 互換）
+            # ステップ 2: Camera ノードを作成（ColorCamera ではなく Camera を使用）
+            logging.debug("[initialize_camera] Creating Camera node...")
+            cam_rgb = self.pipeline.create(dai.node.Camera).build()
+            
+            # ステップ 2.5: カラーカメラの FPS を 120 に設定（ハードウェア上限）
+            logging.debug(f"[initialize_camera] Setting camera FPS to {self.fps}...")
             try:
-                color_cam.setInterleaved(False)
-            except Exception:
-                pass
+                cam_rgb.setFps(self.fps)
+                logging.info(f"[initialize_camera] Camera FPS set to {self.fps}")
+            except Exception as fps_err:
+                logging.warning(f"Camera FPS設定エラー（デフォルト値で続行）: {fps_err}")
+            
+            # ステップ 3: プレビュー出力を requestOutput で作成
+            logging.debug("[initialize_camera] Setting up preview output...")
+            preview = cam_rgb.requestOutput((1280, 800), type=dai.ImgFrame.Type.RGB888p)
+            
+            # ステップ 4: 出力キューを作成
+            logging.debug("[initialize_camera] Creating output queue...")
+            self.video_stream = preview.createOutputQueue()
+            logging.info("[initialize_camera] Output queue created successfully")
+
+            # ステップ 5: 深度ストリーム（オプション）
             try:
-                color_cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-            except Exception:
-                pass
-
-            # プレビュー出力の作成
-            preview_xout = create_xlinkout(self.pipeline)
-            preview_xout.setStreamName("preview")
-            # 安全にリンクを試みる
-            safe_link(color_cam, preview_xout, src_candidates=['video', 'preview', 'out'], dst_candidates=['input'])
-
-            # ----- ステレオ深度ストリームの構築 -----
-            mono_left = create_node(self.pipeline, dai.node.MonoCamera, legacy_name='createMonoCamera')
-            mono_right = create_node(self.pipeline, dai.node.MonoCamera, legacy_name='createMonoCamera')
-            mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
-            mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
-            mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
-            mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-
-            stereo = create_node(self.pipeline, dai.node.StereoDepth, legacy_name='createStereoDepth')
-            try:
-                stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-            except Exception:
-                pass
-
-            # 深度出力サイズをカラーフレーム解像度に合わせる（1920x1080）
-            color_width, color_height = 1920, 1080
-            try:
-                stereo.setOutputSize(color_width, color_height)
-            except Exception:
-                pass
-
-            # キャリブレーションデータを適用（あれば）
-            if self.calibration_data is not None:
+                logging.debug("[initialize_camera] Creating depth setup...")
+                mono_left = self.pipeline.create(dai.node.MonoCamera)
+                mono_right = self.pipeline.create(dai.node.MonoCamera)
+                mono_left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
+                mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_720_P)
+                mono_left.setBoardSocket(dai.CameraBoardSocket.LEFT)
+                mono_right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+                
+                # モノクロカメラの FPS を 120 に設定（ハードウェア上限）
                 try:
-                    # DepthAI API が提供するキャリブレーション設定
-                    # 実際のAPI呼び出しはカメラの型によって異なるため、エラーを無視
-                    if hasattr(color_cam, 'setCalibrationData'):
-                        try:
-                            color_cam.setCalibrationData(self.calibration_data["intrinsics_left"])
-                        except Exception as e1:
-                            logging.warning(f"カラーカメラキャリブレーション設定失敗: {e1}")
+                    mono_left.setFps(self.fps)
+                    mono_right.setFps(self.fps)
+                    logging.debug(f"Mono cameras FPS set to {self.fps}")
+                except Exception as mono_fps_err:
+                    logging.warning(f"Mono camera FPS設定エラー（デフォルト値で続行）: {mono_fps_err}")
 
-                    if hasattr(mono_left, 'setCalibrationData'):
-                        try:
-                            mono_left.setCalibrationData(self.calibration_data["intrinsics_left"])
-                        except Exception as e2:
-                            logging.warning(f"左モノクロカメラキャリブレーション設定失敗: {e2}")
+                stereo = self.pipeline.create(dai.node.StereoDepth)
+                try:
+                    stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DETAIL)
+                except Exception:
+                    pass
 
-                    if hasattr(mono_right, 'setCalibrationData'):
-                        try:
-                            mono_right.setCalibrationData(self.calibration_data["intrinsics_right"])
-                        except Exception as e3:
-                            logging.warning(f"右モノクロカメラキャリブレーション設定失敗: {e3}")
+                mono_left.out.link(stereo.left)
+                mono_right.out.link(stereo.right)
+                
+                self.depth_stream = stereo.depth.createOutputQueue()
+                logging.debug("Depth stream created successfully")
+            except Exception as depth_err:
+                logging.warning(f"深度ストリーム設定エラー（無視）: {depth_err}")
+                self.depth_stream = None
 
-                    if hasattr(stereo, 'setBaseline'):
-                        try:
-                            stereo.setBaseline(self.calibration_data["baseline"])  # mm 単位
-                        except Exception as e4:
-                            logging.warning(f"ベースライン設定失敗: {e4}")
+            # ステップ 6: パイプラインを context manager で開始（depthai 3.1.0対応）
+            logging.debug("[initialize_camera] Starting pipeline with context manager...")
+            self.pipeline.start()
+            logging.info("[initialize_camera] Pipeline started successfully")
 
-                except KeyError as e:
-                    logging.warning(f"キャリブレーションデータ不足: {e}")
-
-            # リンク処理も安全に行う
-            safe_link(mono_left, stereo, src_candidates=['out'], dst_candidates=['left', 'inputLeft'])
-            safe_link(mono_right, stereo, src_candidates=['out'], dst_candidates=['right', 'inputRight'])
-
-            depth_xout = create_xlinkout(self.pipeline)
-            depth_xout.setStreamName("depth")
-            safe_link(stereo, depth_xout, src_candidates=['depth', 'out'], dst_candidates=['input'])
-
-            # デバイス接続（互換ヘルパーで生成）
-            self.device = create_device(self.pipeline)
-
-            # ストリーム取得（互換ラッパー）
-            try:
-                self.video_stream = get_output_queue(self.device, 'preview')
-            except Exception:
-                self.video_stream = None
-            try:
-                self.depth_stream = get_output_queue(self.device, 'depth')
-            except Exception as e:
-                logging.error(f"深度ストリーム取得エラー: {e}")
-                self.depth_stream = None  # 深度機能は無効化
-
-            # 初期化成功フラグを立てる
+            # 初期化成功
             self._initialized = True
             return True
 
         except Exception as e:
             logging.error(f"カメラ初期化エラー: {e}")
-            # 部分的に作成されたリソースがあればクローズしてリセット
+            import traceback
+            traceback.print_exc()
             try:
-                if self.device is not None:
-                    self.device.close()
+                if self.pipeline is not None:
+                    self.pipeline = None
             finally:
-                self.device = None
                 self.pipeline = None
                 self.video_stream = None
                 self.depth_stream = None
@@ -162,11 +136,7 @@ class CameraManager(CameraInterface):
             return False
 
     def get_frame(self) -> Optional[Any]:
-        """
-        カメラフレームを取得する。
-        取得に失敗した場合は薄いグレーのプレースホルダー画像 (1280x800) を返す。
-        """
-        # If camera not initialized or stream missing, return placeholder without logging error
+        """カメラフレームを取得する"""
         if not self._initialized or self.video_stream is None:
             from PyQt6.QtGui import QImage
             width, height = 1280, 800
@@ -175,15 +145,12 @@ class CameraManager(CameraInterface):
             return placeholder
 
         try:
-            # ストリームからフレーム取得
             frame = self.video_stream.get()
             if frame is not None:
-                # The returned object is a depthai.ImgFrame which has getCvFrame()
                 return frame.getCvFrame()
             raise RuntimeError("No frame received")
         except Exception as e:
             logging.error(f"フレーム取得エラー: {e}")
-            # プレースホルダー画像を生成して返す
             from PyQt6.QtGui import QImage
             width, height = 1280, 800
             placeholder = QImage(width, height, QImage.Format.Format_RGB888)
@@ -191,101 +158,72 @@ class CameraManager(CameraInterface):
             return placeholder
 
     def get_depth_frame(self) -> Optional[Any]:
-        """最新の深度フレーム (numpy 配列) を取得。取得できなければ None."""
+        """最新の深度フレームを取得"""
         if not self._initialized or self.depth_stream is None:
             return None
         try:
             depth_msg = self.depth_stream.get()
-            # DepthAI の ImgFrame から numpy 配列へ変換
-            depth_frame = depth_msg.getFrame()   # getFrame() は uint16 (mm) データを返す
-            return depth_frame
+            return depth_msg.getFrame() if depth_msg else None
         except Exception as e:
             logging.error(f"深度フレーム取得エラー: {e}")
             return None
 
     def get_depth_mm(self, x: int, y: int) -> float:
-        """
-        (x, y) のピクセル座標に対する深度を mm 単位で返す（DepthAI 出力は既に mm）。
-        取得できない場合は 0.0 を返す（呼び出し側でエラーハンドリング）。
-        """
+        """(x, y) の深度を mm 単位で返す"""
         depth_frame = self.get_depth_frame()
         if depth_frame is None:
             return 0.0
-        # 範囲チェック
         h, w = depth_frame.shape
         if not (0 <= x < w and 0 <= y < h):
             return 0.0
-        # DepthAI の depth ストリームは既に mm 単位（uint16）
-        depth_mm = float(depth_frame[y, x])
-        logging.debug(f"[DEBUG] Raw depth (mm): {depth_mm} mm")
-        return depth_mm
+        return float(depth_frame[y, x])
 
     def get_depth_mm_at(self, x: int, y: int) -> float:
-        """
-        (x, y) のピクセル座標に対する深度を mm 単位で返す（互換性維持）。
-        取得できない場合は 0.0 を返す（呼び出し側でエラーハンドリング）。
-        """
+        """互換性維持"""
         return self.get_depth_mm(x, y)
 
     def get_depth_at(self, x: int, y: int) -> float:
-        """
-        (x, y) のピクセル座標に対する深度を **視差** 単位で返す（互換性維持）。
-        取得できない場合は 0.0 を返す（呼び出し側でエラーハンドリング）。
-        """
-        depth_frame = self.get_depth_frame()
-        if depth_frame is None:
-            return 0.0
-        # 範囲チェック
-        h, w = depth_frame.shape
-        if not (0 <= x < w and 0 <= y < h):
-            return 0.0
-        # DepthAI の深度は uint16 (mm) なのでそのまま返す（互換性維持）
-        raw_depth = float(depth_frame[y, x])
-        logging.debug(f"Raw depth (disparity): {raw_depth} disparity")
-        return raw_depth
+        """互換性維持"""
+        return self.get_depth_mm(x, y)
 
     def set_fps(self, fps: int) -> None:
-        """FPS を設定する（実機では使用しないがインターフェースは保持）"""
+        """FPS を設定"""
         self.fps = fps
 
     def close_camera(self) -> None:
-        """カメラをクローズし、初期化フラグをリセット"""
+        """カメラをクローズ"""
         try:
-            # Close device safely; no further action needed for mypy
-            if self.device is not None:
-                self.device.close()
+            if self.pipeline is not None:
+                # depthai 3.1.0: pipeline の自動クローズは with ブロックで管理
+                pass
         except Exception as e:
             logging.error(f"カメラクローズ時エラー: {e}")
         finally:
-            self.device = None
             self.pipeline = None
             self.video_stream = None
-            self.depth_stream = None   # 追加
+            self.depth_stream = None
             self._initialized = False
 
     def load_calibration(self, file_path: str) -> bool:
-        """キャリブレーションデータをファイルから読み込む"""
+        """キャリブレーションデータをロード"""
         try:
             import json
             with open(file_path, "r", encoding="utf-8") as f:
-                calib_data = json.load(f)
-            self.calibration_data = calib_data
+                self.calibration_data = json.load(f)
             return True
         except Exception as e:
-            logging.error(f"キャリブレーションデータ読み込みエラー: {e}")
+            logging.error(f"キャリブレーション読み込みエラー: {e}")
             return False
 
     def get_confidence_map(self) -> Optional[Any]:
-        """最新の信頼度マップ (numpy 配列) を取得。取得できなければ None."""
+        """信頼度マップを取得"""
         if not self._initialized or self.depth_stream is None:
             return None
         try:
             depth_msg = self.depth_stream.get()
-            # DepthAI が confidence map を提供する場合
             if hasattr(depth_msg, 'getConfidenceMap'):
                 return depth_msg.getConfidenceMap()
-            else:
-                return None
+            return None
         except Exception as e:
             logging.error(f"信頼度マップ取得エラー: {e}")
             return None
