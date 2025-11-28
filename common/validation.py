@@ -7,6 +7,7 @@ import os
 import json
 from typing import Tuple, List
 from common.utils import load_json_file, save_json_file
+from common.config import SCREEN_AREA_LOG_PATH, SCREEN_DEPTH_LOG_PATH, TRACKED_TARGET_CONFIG_PATH
 
 def check_persistent_settings() -> Tuple[bool, List[str]]:
     """
@@ -18,7 +19,7 @@ def check_persistent_settings() -> Tuple[bool, List[str]]:
     ok = True
 
     # スクリーン領域
-    area_path = os.path.join("ScreenAreaLogs", "area_log.json")
+    area_path = SCREEN_AREA_LOG_PATH
     if not os.path.isfile(area_path):
         ok = False; msgs.append("スクリーン領域ログが見つかりません。")
     else:
@@ -30,7 +31,7 @@ def check_persistent_settings() -> Tuple[bool, List[str]]:
             ok = False; msgs.append("スクリーン領域ログの読み込みに失敗しました。")
 
     # 深度
-    depth_path = os.path.join("ScreenDepthLogs", "depth_log.json")
+    depth_path = SCREEN_DEPTH_LOG_PATH
     if not os.path.isfile(depth_path):
         ok = False; msgs.append("深度ログが見つかりません。")
     else:
@@ -42,7 +43,7 @@ def check_persistent_settings() -> Tuple[bool, List[str]]:
             ok = False; msgs.append("深度ログの読み込みに失敗しました。")
 
     # トラッキング設定
-    track_path = os.path.join("TrackBallLogs", "tracked_ball_config.json")
+    track_path = TRACKED_TARGET_CONFIG_PATH
     if not os.path.isfile(track_path):
         ok = False; msgs.append("トラッキング設定ファイルが見つかりません。")
     else:
@@ -74,13 +75,15 @@ def create_default_settings() -> None:
         "screen_depth": 1.0
     }
     
-    # トラッキング設定のデフォルト値（赤色）
+    # トラッキング設定のデフォルト値（赤色） - 新しい形式に変更
     default_track = {
         "color": "赤",
-        "color_range": [
-            [0, 100, 50],
-            [10, 255, 255]
-        ]
+        "h_min": 0,
+        "s_min": 100,
+        "v_min": 100,
+        "h_max": 10,
+        "s_max": 255,
+        "v_max": 255
     }
     
     # ディレクトリ作成
@@ -89,9 +92,9 @@ def create_default_settings() -> None:
     os.makedirs("TrackBallLogs", exist_ok=True)
     
     # ファイル保存
-    save_json_file("ScreenAreaLogs/area_log.json", default_area)
-    save_json_file("ScreenDepthLogs/depth_log.json", default_depth)
-    save_json_file("TrackBallLogs/tracked_ball_config.json", default_track)
+    save_json_file(SCREEN_AREA_LOG_PATH, default_area)
+    save_json_file(SCREEN_DEPTH_LOG_PATH, default_depth)
+    save_json_file(TRACKED_TARGET_CONFIG_PATH, default_track)
 
 def validate_and_create_defaults() -> bool:
     """

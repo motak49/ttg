@@ -43,7 +43,7 @@ class MovingTargetViewer(QMainWindow):
         # 動くターゲット管理
         self.moving_target_manager = MovingTargetManager(screen_manager)
 
-        # 前面スクリーン衝突検知器（共通） — 外部から渡された検知器があればそれを使用
+        # 前面スクリーン衝突検知器（共通） ? 外部から渡された検知器があればそれを使用
         if front_detector is not None:
             self.front_detector = front_detector
         else:
@@ -53,8 +53,14 @@ class MovingTargetViewer(QMainWindow):
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        # 検出情報ラベル（デバッグ用）
+        self.detection_label = QLabel()
+        self.detection_label.setText("検出情報: -")
+        self.detection_label.setStyleSheet("background-color: #f0f0f0; padding: 4px;")
+        
         # レイアウト設定
         layout = QVBoxLayout()
+        layout.addWidget(self.detection_label)
         layout.addWidget(self.image_label)
         
         central_widget = QWidget()
@@ -88,7 +94,7 @@ class MovingTargetViewer(QMainWindow):
                 default_image = os.path.join("assets", "targets", active_name)
             else:
                 # フォールバック: 既存のハードコード画像（存在すれば使用）またはスキップ
-                fallback_path = "assets/targets/1876bdbb-9365-42aa-9277-54bad2a98411.png"
+                fallback_path = "assets/targets/8369a130-b841-4da4-9f1e-e51ca0f7f6a6.jpg"
                 default_image = fallback_path if os.path.exists(fallback_path) else None
 
             # デフォルト画像が取得できたらターゲット追加
@@ -138,6 +144,17 @@ class MovingTargetViewer(QMainWindow):
             if hit is not None:
                 # 前面スクリーンに当たった場合の表示/処理
                 QMessageBox.information(self, "衝突検知", "前面スクリーンに衝突しました！")
+            
+            # 検出情報を取得（改善: 両ゲームモード共通機能）
+            detection_info = self.ball_tracker.get_detection_info(frame)
+            if detection_info:
+                if detection_info["detected"]:
+                    status = f"✓ 検出中 | 輪郭: {detection_info['contour_count']} | 面積: {detection_info['max_area']:.0f}"
+                    self.detection_label.setStyleSheet("background-color: #e8f5e9; padding: 4px;")
+                else:
+                    status = f"✗ 未検出 | ピクセル: {detection_info['pixel_count']}"
+                    self.detection_label.setStyleSheet("background-color: #ffebee; padding: 4px;")
+                self.detection_label.setText(status)
             
             # フレームにターゲットを描画
             annotated_frame = self._draw_targets(frame)

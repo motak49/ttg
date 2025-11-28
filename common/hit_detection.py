@@ -12,7 +12,7 @@
 from typing import Optional, Tuple, List
 import numpy as np
 import cv2
-from common.config import COLLISION_DEPTH_THRESHOLD
+from common.config import COLLISION_DEPTH_THRESHOLD, ENABLE_ANGLE_COLLISION_CHECK
 
 
 class FrontCollisionDetector:
@@ -24,7 +24,7 @@ class FrontCollisionDetector:
         get_last_detected_position() -> Optional[(x,y)]
     """
 
-    def __init__(self, screen_manager, angle_threshold: float = 45.0, dist_tolerance: float = 5.0):
+    def __init__(self, screen_manager, angle_threshold: float = 45.0, dist_tolerance: float = 5.0, enable_angle_check: bool = ENABLE_ANGLE_COLLISION_CHECK):
         self.screen_manager = screen_manager
         self._prev_center: Optional[Tuple[int, int]] = None
         self._last_center: Optional[Tuple[int, int]] = None
@@ -34,6 +34,7 @@ class FrontCollisionDetector:
         self._prev_depth: Optional[float] = None
         self.angle_threshold = angle_threshold
         self.dist_tolerance = dist_tolerance
+        self._enable_angle_check = enable_angle_check
 
     def update_and_check(self, detected: Optional[Tuple[int, int, float]]) -> Optional[Tuple[int, int, float]]:
         """
@@ -51,6 +52,7 @@ class FrontCollisionDetector:
                 self._collision_state = "none"
             self._prev_center = self._last_center
             self._last_center = None
+            self._last_reached_coord = None  # リセット
             return None
 
         x, y, depth = detected
@@ -65,8 +67,9 @@ class FrontCollisionDetector:
             if inside:
                 hit_detected = True
             else:
-                # 軌道変化判定
-                if self._last_center is not None:
+                # 軌道変化判定（角度判定が有効な場合のみ実行）
+                # ENABLE_ANGLE_COLLISION_CHECK = False の場合、この判定はスキップされ、深度のみでの判定になる
+                if self._enable_angle_check and self._last_center is not None:
                     v_prev = None
                     if self._prev_center is not None:
                         v_prev = np.array(self._last_center) - np.array(self._prev_center)
@@ -82,27 +85,16 @@ class FrontCollisionDetector:
         self._prev_center = self._last_center
         self._last_center = (x, y)
 
-        if hit_detected:
-            if self._collision_state == "none":
-                self._collision_state = "hit_front"
-                self._depth_at_hit = depth
-                self._prev_depth = depth
-                self._last_reached_coord = (x, y, depth)
-                return self._last_reached_coord
-            elif self._collision_state == "hit_front":
-                # 深度が閾値以下になったら最終ヒットとする
-                if depth <= COLLISION_DEPTH_THRESHOLD:
-                    self._collision_state = "none"
-                    return (x, y, depth)
-                else:
-                    return None
-            else:
-                self._last_reached_coord = (x, y, depth)
-                return self._last_reached_coord
+        if hit_detected and depth <= COLLISION_DEPTH_THRESHOLD:
+            # 衝突判定と深度判定の両方が満たされた場合のみヒットを返す
+            self._collision_state = "none"
+            self._last_reached_coord = (x, y, depth)
+            return self._last_reached_coord
         else:
-            # ヒットでない場合は状態リセット
+            # ヒット判定されなかった場合は状態リセット
             if self._collision_state != "none":
                 self._collision_state = "none"
+                self._last_reached_coord = None
             return None
 
     def get_last_reached_coord(self) -> Optional[Tuple[int, int, float]]:

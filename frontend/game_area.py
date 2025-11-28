@@ -78,7 +78,11 @@ class GameArea(QWidget):
         # タイマーで映像を更新
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
-        self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 約30fps (config)
+        import logging
+        fps_setting = OX_GAME_TARGET_FPS
+        timer_interval = timer_interval_ms(fps_setting)
+        logging.info(f"[GameArea] FPS設定: {fps_setting} FPS, タイマー間隔: {timer_interval} ms で起動")
+        self.timer.start(timer_interval)  # 120fps（ハードウェア上限）(config)
 
         # ログがあればロードして表示
         try:

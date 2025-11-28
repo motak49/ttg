@@ -70,11 +70,6 @@ class DepthConfig(QWidget):
         main_layout.addLayout(button_layout)
         self.setLayout(main_layout)
 
-        # タイマーで映像を更新（120fps固定）
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_frame)
-        self.timer.start(timer_interval_ms(TRACK_TARGET_CONFIG_FPS))  # 約120fps (config)
-
         # クリックされた座標リスト
         self.click_points: List[Tuple[int, int]] = []
         # フレームと表示サイズの情報（座標変換用）
@@ -85,6 +80,14 @@ class DepthConfig(QWidget):
         # 深度フレームサイズ（座標変換用）
         self._depth_width = 0
         self._depth_height = 0
+
+        # タイマーで映像を更新（120fps固定: ハードウェア上限）
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_frame)
+        fps_setting = TRACK_TARGET_CONFIG_FPS
+        timer_interval = timer_interval_ms(fps_setting)
+        logging.info(f"[DepthConfig] FPS設定: {fps_setting} FPS, タイマー間隔: {timer_interval} ms で起動")
+        self.timer.start(timer_interval)  # 120fps（ハードウェア上限）(config)
 
     def update_frame(self) -> None:
         """カメラフレーム取得 → QLabel に描画 + グリッドとクリックポイントをオーバーレイ"""

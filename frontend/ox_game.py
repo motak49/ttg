@@ -85,10 +85,16 @@ class OxGame(QWidget):
         )
         self.video_label.setScaledContents(True)
         self.video_label.setMinimumSize(0, 0)
+        
+        # 検出情報ラベル（デバッグ用）
+        self.detection_label = QLabel(self)
+        self.detection_label.setText("検出情報: -")
+        self.detection_label.setStyleSheet("background-color: #f0f0f0; padding: 4px;")
 
         layout = QVBoxLayout()
         layout.addWidget(self.fps_label)
         layout.addWidget(self.player_label)
+        layout.addWidget(self.detection_label)
         layout.addWidget(self.video_label)
         self.setLayout(layout)
 
@@ -96,7 +102,11 @@ class OxGame(QWidget):
         self.tracking_active = True
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._update_frame)
-        self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))  # 120fps（ハードウェア上限）(config)
+        import logging
+        fps_setting = OX_GAME_TARGET_FPS
+        timer_interval = timer_interval_ms(fps_setting)
+        logging.info(f"[OxGame] FPS設定: {fps_setting} FPS, タイマー間隔: {timer_interval} ms で起動")
+        self.timer.start(timer_interval)  # 120fps（ハードウェア上限）(config)
 
     def _update_player_label(self) -> None:
         if self.current_player == 1:
@@ -252,15 +262,31 @@ class OxGame(QWidget):
 
         pix = QPixmap.fromImage(q_img)
 
-        # デバッグ用トラッキング情報取得
+        # デバッグ用トラッキング情報取得＆検出情報を表示
         detected = None
         hit = None
+        detection_info = None
         if isinstance(frame, np.ndarray):
             detected = self.ball_tracker.get_hit_area(frame)
             hit = self.ball_tracker.check_target_hit(frame)
+            # 検出情報を取得（改善: 両ゲームモード共通機能）
+            detection_info = self.ball_tracker.get_detection_info(frame)
         else:
             detected = None
             hit = None
+            detection_info = None
+        
+        # 検出情報ラベルを更新
+        if detection_info:
+            if detection_info["detected"]:
+                grid_pos = detection_info.get("grid_position")
+                grid_str = f"({grid_pos[0]}, {grid_pos[1]})" if grid_pos else "N/A"
+                status = f"✓ 検出中 | 輪郭: {detection_info['contour_count']} | 面積: {detection_info['max_area']:.0f} | グリッド: {grid_str}"
+                self.detection_label.setStyleSheet("background-color: #e8f5e9; padding: 4px;")
+            else:
+                status = f"✗ 未検出 | ピクセル: {detection_info['pixel_count']}"
+                self.detection_label.setStyleSheet("background-color: #ffebee; padding: 4px;")
+            self.detection_label.setText(status)
 
         painter = QPainter(pix)
         width, height = pix.width(), pix.height()

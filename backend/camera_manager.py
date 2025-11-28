@@ -62,17 +62,17 @@ class CameraManager(CameraInterface):
             logging.debug("[initialize_camera] Creating Camera node...")
             cam_rgb = self.pipeline.create(dai.node.Camera).build()
             
-            # ステップ 2.5: カラーカメラの FPS を 120 に設定（ハードウェア上限）
-            logging.debug(f"[initialize_camera] Setting camera FPS to {self.fps}...")
-            try:
-                cam_rgb.setFps(self.fps)
-                logging.info(f"[initialize_camera] Camera FPS set to {self.fps}")
-            except Exception as fps_err:
-                logging.warning(f"Camera FPS設定エラー（デフォルト値で続行）: {fps_err}")
-            
             # ステップ 3: プレビュー出力を requestOutput で作成
             logging.debug("[initialize_camera] Setting up preview output...")
             preview = cam_rgb.requestOutput((1280, 800), type=dai.ImgFrame.Type.RGB888p)
+            
+            # ステップ 3.5: 出力ストリームの FPS を 120 に設定（ハードウェア上限）
+            logging.debug(f"[initialize_camera] Setting preview FPS to {self.fps}...")
+            try:
+                preview.setFps(self.fps)
+                logging.info(f"[initialize_camera] Preview FPS set to {self.fps}")
+            except Exception as fps_err:
+                logging.warning(f"Preview FPS設定エラー（デフォルト値で続行）: {fps_err}")
             
             # ステップ 4: 出力キューを作成
             logging.debug("[initialize_camera] Creating output queue...")

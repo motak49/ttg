@@ -9,17 +9,17 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPainter, QColor, QPen, QImage, QPixmap
+from PyQt6.QtGui import QPainter, QColor, QPen, QImage, QPixmap, QCloseEvent
 from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
 
 from frontend.game_logic import game_logic
 import logging
-from common.logger import logger
 from common.config import TRACK_TARGET_CONFIG_FPS, timer_interval_ms
 import cv2
 import numpy as np
+from common.logger import logger
 
 
 class TrackTargetViewer(QWidget):
@@ -62,7 +62,7 @@ class TrackTargetViewer(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
         # 120fps = 1000ms / 120 ≈ 8.33ms
-        self.timer.start(8)  # 約120fps
+        self.timer.start(8)  # 約 120 fps
 
         # ログがあればロードして表示
         try:
@@ -193,6 +193,11 @@ class TrackTargetViewer(QWidget):
             if not isinstance(frame, np.ndarray):
                 return
 
+            # HSV 範囲のバリデーション: すべての値が正であることを確認
+            if any(v < 0 for v in upper_bound) or any(v <= 0 for v in lower_bound):
+                logger.warning("HSV 値が無効です。ハイライト描画をスキップします。")
+                return
+
             # 画像形式を確認し、必要に応じて変換
             if len(frame.shape) == 2:  # モノクロ画像の場合
                 # カラー画像に変換
@@ -222,7 +227,7 @@ class TrackTargetViewer(QWidget):
         except Exception as e:
             print(f"ハイライト表示エラー: {e}")
 
-    def closeEvent(self, a0) -> None:
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
         """ウィンドウを閉じる際の処理"""
         # タイマーを停止
         if hasattr(self, 'timer') and self.timer.isActive():
@@ -234,4 +239,5 @@ class TrackTargetViewer(QWidget):
         except Exception as e:
             print(f"クローズ処理エラー: {e}")
             # 例外が発生しても強制的にクローズ
-            a0.accept()
+            if a0 is not None:
+                a0.accept()

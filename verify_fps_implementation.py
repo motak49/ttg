@@ -69,11 +69,11 @@ def check_camera_manager_fps():
         print("❌ self.fps が 120 に初期化されていません")
         return False
     
-    # setFps(self.fps) が呼ばれているか
-    if "cam_rgb.setFps(self.fps)" in content:
-        print("✅ カラーカメラの setFps() が呼ばれています")
+    # preview.setFps(self.fps) が呼ばれているか（修正版）
+    if "preview.setFps(self.fps)" in content:
+        print("✅ プレビュー出力の setFps() が呼ばれています（正しい実装）")
     else:
-        print("❌ カラーカメラの setFps() が見つかりません")
+        print("❌ プレビュー出力の setFps() が見つかりません")
         return False
     
     # モノクロカメラの setFps が呼ばれているか

@@ -21,8 +21,8 @@ def test_check_target_hit_inside_polygon():
     screen_manager = _create_screen_manager_with_area()
     tracker = BallTracker(screen_manager)
 
-    # Mock detect_ball to return a point inside the polygon
-    mock_result = (50, 50, 1.0)  # x, y, depth
+    # Mock detect_ball to return a point inside the polygon with valid depth (<= 0.15m)
+    mock_result = (50, 50, 0.1)  # x, y, depth (0.1m = 10cm, which is <= COLLISION_DEPTH_THRESHOLD)
 
     dummy_frame = np.zeros((10, 10, 3), dtype=np.uint8)
     with patch.object(tracker, "detect_ball", return_value=mock_result):
