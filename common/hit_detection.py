@@ -12,7 +12,7 @@
 from typing import Optional, Tuple, List
 import numpy as np
 import cv2
-from common.config import COLLISION_DEPTH_THRESHOLD, ENABLE_ANGLE_COLLISION_CHECK
+from common.config import COLLISION_DEPTH_THRESHOLD, ENABLE_ANGLE_COLLISION_CHECK, DEPTH_TOLERANCE_M
 
 
 class FrontCollisionDetector:
@@ -88,9 +88,14 @@ class FrontCollisionDetector:
         # 深度チェック: 深度が0.00の場合は衝突と判定しない（無効な深度値）
         if depth <= 0.0:
             return None
-        
-#        if hit_detected and depth <= COLLISION_DEPTH_THRESHOLD:
-        if hit_detected and depth <= COLLISION_DEPTH_THRESHOLD:
+
+        # スクリーン深度を取得し、許容誤差内でヒットと判定
+        screen_depth_mm = self.screen_manager.get_screen_depth()
+        screen_depth_m = screen_depth_mm / 1000.0 if screen_depth_mm else None
+        threshold_depth = screen_depth_m or COLLISION_DEPTH_THRESHOLD
+
+        # 許容誤差を考慮して判定
+        if hit_detected and abs(depth - threshold_depth) <= DEPTH_TOLERANCE_M:
             # 衝突判定と深度判定の両方が満たされた場合のみヒットを返す
             self._collision_state = "none"
             self._last_reached_coord = (x, y, depth)

@@ -29,6 +29,9 @@ COLLISION_DEPTH_THRESHOLD = 2.0   # Updated threshold to accommodate measured de
 # 深度測定の有効範囲上限（mm）
 MAX_VALID_DEPTH_MM = 3000   # 例: 5m までを有効とみなす
 
+# 衝突判定時の許容誤差（メートル単位）
+DEPTH_TOLERANCE_M = 0.05
+
 # 角度による衝突判定を有効にするか（デフォルトは無効）
 ENABLE_ANGLE_COLLISION_CHECK = False
 

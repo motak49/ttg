@@ -213,7 +213,8 @@ class OxGame(QWidget):
         if not self.tracking_active:
             self.tracking_active = True
             self.timer.start(timer_interval_ms(OX_GAME_TARGET_FPS))
-            self.collision_shown = False
+        # 常に衝突表示フラグをリセット
+        self.collision_shown = False
 
 
     def _show_collision_stop_message(self) -> None:
@@ -276,27 +277,37 @@ class OxGame(QWidget):
         hit = None
         detection_info = None
         realtime_depth = None  # リアルタイム深度を保持
+        depth_source = "unknown"  # 深度データソースを記録
+        
         if isinstance(frame, np.ndarray):
             # detected = self.ball_tracker.get_hit_area(frame)  # not used
             hit = self.ball_tracker.check_target_hit(frame)  # type: ignore[arg-type]
             # 検出情報を取得（改善: 両ゲームモード共通機能）
             detection_info = self.ball_tracker.get_detection_info(frame)  # type: ignore[arg-type]
-            # リアルタイム深度を取得（ボール検出時のみ）
-            if detection_info and detection_info.get("detected"):
-                detected_result = self.ball_tracker.detect_ball(frame)  # type: ignore[arg-type]
-                if detected_result is not None:
-                    _, _, realtime_depth = detected_result
+            # リアルタイム深度を常に取得（検出状況に関わらず）
+            detected_result = self.ball_tracker.detect_ball(frame)  # type: ignore[arg-type]
+            if detected_result is not None:
+                _, _, realtime_depth = detected_result
+                # 深度ソースを判定（簡易判定）
+                # 詳細はログファイルで確認可能
+                if self.ball_tracker.camera_manager is not None:
+                    depth_source = "RT or キャッシュ"
+                else:
+                    depth_source = "設定値"
+            else:
+                depth_source = "-"
         else:
             hit = None
             detection_info = None
             realtime_depth = None
+            depth_source = "-"
         
-        # 検出情報ラベルを更新
+        # 検出情報ラベルを更新（深度ソースを含める）
         if detection_info:
             if detection_info["detected"]:
                 grid_pos = detection_info.get("grid_position")
                 grid_str = f"({grid_pos[0]}, {grid_pos[1]})" if grid_pos else "N/A"
-                status = f"? 検出中 | 輪郭: {detection_info['contour_count']} | 面積: {detection_info['max_area']:.0f} | グリッド: {grid_str}"
+                status = f"? 検出中 | 輪郭: {detection_info['contour_count']} | 面積: {detection_info['max_area']:.0f} | グリッド: {grid_str} | 深度ソース: {depth_source}"
                 self.detection_label.setStyleSheet("background-color: #e8f5e9; padding: 4px;")
             else:
                 status = f"? 未検出 | ピクセル: {detection_info['pixel_count']}"
@@ -325,16 +336,42 @@ class OxGame(QWidget):
                 painter.setPen(QPen(QColor(0, 255, 0), 10))
                 painter.drawRect(x - half_side, y - half_side, half_side * 2, half_side * 2)
                 
-                # ★ 常に検出時の深度情報を緑テキストで表示（30px）
-                # リアルタイム深度を表示（検出時のみ）
-                display_depth = realtime_depth if realtime_depth is not None else (self.screen_manager.get_screen_depth() or 1.0)
-                depth_text = f"{display_depth:.2f}m"
-                painter.setPen(QPen(QColor(0, 255, 0), 2))
-                font = QFont()
-                font.setPointSize(30)
-                painter.setFont(font)
-                # ボール位置の下に表示
-                painter.drawText(x - 30, y + 40, depth_text)
+                # ★ 常に検出時の深度情報を表示（リアルタイムと設定値を区別）
+                if realtime_depth is not None:
+                    depth_text = f"{realtime_depth:.2f}m"
+                    # リアルタイム深度は緑で表示
+                    painter.setPen(QPen(QColor(0, 255, 0), 2))
+                    font = QFont()
+                    font.setPointSize(30)
+                    font.setBold(True)  # ボールド化してリアルタイムデータを強調
+                    painter.setFont(font)
+                    # ボール位置の下に表示
+                    painter.drawText(x - 60, y + 40, depth_text)
+                    
+                    # リアルタイムデータ表示を示すラベルを小さく表示
+                    painter.setPen(QPen(QColor(0, 255, 0), 1))
+                    font_label = QFont()
+                    font_label.setPointSize(10)
+                    painter.setFont(font_label)
+                    painter.drawText(x - 60, y + 20, "(RT)")  # RT = RealTime
+                else:
+                    depth_text = "-- m"  # 表示用に "-- m" を使用
+                    painter.setPen(QPen(QColor(0, 255, 0), 2))
+                    font = QFont()
+                    font.setPointSize(30)
+                    painter.setFont(font)
+                    painter.drawText(x - 30, y + 40, depth_text)
+
+                # 衝突判定用のスクリーン深度を取得し、表示（設定値）
+                screen_depth_m = self.screen_manager.get_screen_depth()
+                if screen_depth_m > 0:
+                    screen_depth_text = f"設定: {screen_depth_m:.2f}m"
+                    painter.setPen(QPen(QColor(200, 200, 200), 1))  # グレーで設定値を表示
+                    font = QFont()
+                    font.setPointSize(12)
+                    painter.setFont(font)
+                    # ボール位置の下に設定値を表示
+                    painter.drawText(x - 60, y + 70, screen_depth_text)
 
         # ヒットが検出された場合は青枠でハイライトし、座標ポップアップを表示
         if self.debug and self.tracking_active and hit is not None:

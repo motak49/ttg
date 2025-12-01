@@ -43,7 +43,7 @@ class DepthConfig(QWidget):
 
         # 深度表示用ラベル
         self.depth_label = QLabel(self)
-        self.depth_label.setText("Depth: -- mm")
+        self.depth_label.setText("Depth: -- m")
         self.depth_label.setStyleSheet("font-size: 16px; color: blue;")
 
         # デバッグオプション
@@ -265,7 +265,9 @@ class DepthConfig(QWidget):
                 raw_depth = self.camera_manager.get_depth_mm_at(img_x, img_y)
                 print(f"[DEBUG] Raw depth value (fallback): {raw_depth} mm")
                 depth_mm = raw_depth  # 補正なし
-            self.depth_label.setText(f"Depth: {depth_mm:.1f} mm")
+            # mm → m に変換して表示
+            depth_m = depth_mm / 1000.0
+            self.depth_label.setText(f"Depth: {depth_m:.3f} m")
         except Exception as e:
             print(f"深度取得エラー: {e}")
             self.depth_label.setText("Depth: Error")
@@ -312,14 +314,16 @@ class DepthConfig(QWidget):
                           f"{depth_y if self._depth_height>0 else img_y}) -> {depth_mm:.1f} mm")
 
             # 単一値で保存（辞書形式） - screen_depth キーに統一
-            data = {"screen_depth": round(depth_mm, 1)}
+            # mm → m に変換して保存
+            depth_m = depth_mm / 1000.0
+            data = {"screen_depth": round(depth_m, 3)}
             os.makedirs(os.path.dirname(DEPTH_LOG_PATH), exist_ok=True)
             with open(DEPTH_LOG_PATH, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
 
             print("深度ログが保存されました。")
             self.click_points.clear()  # 保存後はクリア
-            self.depth_label.setText("Depth: -- mm")
+            self.depth_label.setText("Depth: -- m")
 
         except Exception as e:
             print(f"深度保存エラー: {e}")

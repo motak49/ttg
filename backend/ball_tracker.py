@@ -38,6 +38,9 @@ class BallTracker(BallTrackerInterface):
         self._collision_detector: FrontCollisionDetector = (collision_detector if collision_detector is not None else FrontCollisionDetector(self.screen_manager))
         # カメラマネージャーへの参照（リアルタイム深度取得用）
         self.camera_manager: Optional[Any] = None
+        # ★リアルタイム深度キャッシュ（フォールバック時の最後の有効値）
+        self._last_valid_realtime_depth: Optional[float] = None
+        self._fallback_count: int = 0  # フォールバック回数のカウント
 
     def set_target_color(self, color: str) -> None:
         """
@@ -164,22 +167,45 @@ class BallTracker(BallTrackerInterface):
         ball_y = y + h // 2
 
         # ★ リアルタイム深度を取得（カメラマネージャーから）
-        # カメラマネージャーが設定されている場合はそちらから取得
         depth: float = 0.0
+        
         if self.camera_manager is not None:
             try:
                 depth_mm = self.camera_manager.get_depth_mm(ball_x, ball_y)
                 if depth_mm > 0:
                     depth = depth_mm / 1000.0  # mm → m に変換
+                    self._last_valid_realtime_depth = depth
+                    self._fallback_count = 0
+                    import logging
+                    logging.info(f"[detect_ball] ✓ リアルタイム深度取得成功: {depth:.2f}m (座標: {ball_x}, {ball_y})")
                 else:
-                    # 深度フレームが無効な場合のフォールバック
-                    depth = self.screen_manager.get_screen_depth() or 0.0
+                    # リアルタイム深度が取得できない場合
+                    if self._last_valid_realtime_depth is not None:
+                        # ★キャッシュされた直近のリアルタイム深度を使用
+                        depth = self._last_valid_realtime_depth
+                        self._fallback_count += 1
+                        import logging
+                        logging.warning(f"[detect_ball] ⚠ リアルタイム深度 0: キャッシュ値を使用 {depth:.2f}m (フォールバック回数: {self._fallback_count})")
+                    else:
+                        # キャッシュもない場合はスクリーン深度にフォールバック
+                        depth = self.screen_manager.get_screen_depth() or 0.0
+                        import logging
+                        logging.warning(f"[detect_ball] ⚠ リアルタイム深度取得失敗（キャッシュなし）: スクリーン深度にフォールバック {depth:.2f}m")
             except Exception as e:
-                print(f"リアルタイム深度取得エラー: {e}")
-                depth = self.screen_manager.get_screen_depth() or 0.0
+                import logging
+                logging.error(f"[detect_ball] ✗ リアルタイム深度取得例外: {e}")
+                if self._last_valid_realtime_depth is not None:
+                    # キャッシュがあればそれを使用
+                    depth = self._last_valid_realtime_depth
+                    self._fallback_count += 1
+                else:
+                    # キャッシュもない場合はスクリーン深度
+                    depth = self.screen_manager.get_screen_depth() or 0.0
         else:
-            # カメラマネージャーが設定されていない場合は スクリーン深度を使用
+            # カメラマネージャーが設定されていない場合はスクリーン深度を使用
             depth = self.screen_manager.get_screen_depth() or 0.0
+            import logging
+            logging.warning(f"[detect_ball] ⚠ カメラマネージャーなし: スクリーン深度を使用 {depth:.2f}m")
         
         return (ball_x, ball_y, depth)
 

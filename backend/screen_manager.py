@@ -83,7 +83,7 @@ class ScreenManager(ScreenManagerInterface):
         """
         設定済みのスクリーンまでの距離を取得する
         Returns:
-            float: スクリーンまでの距離
+            float: スクリーンまでの距離 (メートル)
         """
         # Return default value if not set, instead of None to match interface requirement
         return self.screen_depth or 0.0
@@ -151,6 +151,11 @@ class ScreenManager(ScreenManagerInterface):
                     depth_data: Any = json.load(f)
                 if isinstance(depth_data, dict):
                     depth_dict = cast(Dict[str, Any], depth_data)
-                    self.screen_depth = depth_dict.get("screen_depth")
+                    depth_value = depth_dict.get("screen_depth")
+                    # 旧形式（mm）の場合は自動的に m に変換
+                    if isinstance(depth_value, (int, float)) and depth_value > 1000:
+                        self.screen_depth = depth_value / 1000.0
+                    else:
+                        self.screen_depth = depth_value
             except Exception as e:
                 print(f"深度ログ読み込みエラー: {e}")

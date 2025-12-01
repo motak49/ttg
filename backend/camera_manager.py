@@ -19,6 +19,12 @@ class CameraManager(CameraInterface):
         self._initialized: bool = False
         self.depth_stream: Optional[Any] = None
         self.calibration_data: Optional[dict[str, Any]] = None
+        # ★RGB フレームサイズキャッシュ（座標スケーリング用）
+        self._rgb_frame_width: int = 1280
+        self._rgb_frame_height: int = 800
+        # ★深度フレームサイズキャッシュ
+        self._depth_frame_width: int = 640
+        self._depth_frame_height: int = 360
 
     def is_initialized(self) -> bool:
         """カメラが既に初期化されているかを返す"""
@@ -148,7 +154,15 @@ class CameraManager(CameraInterface):
         try:
             frame = self.video_stream.get()
             if frame is not None:
-                return frame.getCvFrame()
+                cv_frame = frame.getCvFrame()
+                # ★RGB フレームサイズをキャッシュ
+                if cv_frame is not None and hasattr(cv_frame, 'shape'):
+                    h, w = cv_frame.shape[:2]
+                    if self._rgb_frame_height != h or self._rgb_frame_width != w:
+                        logging.debug(f"[get_frame] RGB フレームサイズ: {w}x{h}")
+                        self._rgb_frame_width = w
+                        self._rgb_frame_height = h
+                return cv_frame
             raise RuntimeError("No frame received")
         except Exception as e:
             logging.error(f"フレーム取得エラー: {e}")
@@ -164,11 +178,12 @@ class CameraManager(CameraInterface):
             return None
         try:
             # DepthAI 3.1 新 API: timeout as timedelta
-            depth_msg = self.depth_stream.get(timeout=timedelta(milliseconds=10))
+            # ★タイムアウトを 10ms から 100ms に増加（フレームが間に合うように）
+            depth_msg = self.depth_stream.get(timeout=timedelta(milliseconds=100))
         except TypeError:
             # 旧 API が残っている場合のフォールバック
             try:
-                depth_msg = self.depth_stream.get(timeoutMs=10)
+                depth_msg = self.depth_stream.get(timeoutMs=100)
             except Exception as e:
                 logging.warning(f"Depth stream get() failed (fallback): {e}")
                 depth_msg = None
@@ -180,6 +195,13 @@ class CameraManager(CameraInterface):
             return None
         try:
             frame = depth_msg.getFrame()
+            # ★深度フレームサイズをキャッシュ（初回）
+            if frame is not None and frame.shape:
+                h, w = frame.shape[:2]
+                if self._depth_frame_height != h or self._depth_frame_width != w:
+                    logging.info(f"[get_depth_frame] 深度フレームサイズ更新: {self._depth_frame_width}x{self._depth_frame_height} -> {w}x{h}")
+                    self._depth_frame_width = w
+                    self._depth_frame_height = h
             logging.debug(
                 f"Depth frame obtained: shape={frame.shape}, dtype={frame.dtype}"
             )
@@ -189,21 +211,88 @@ class CameraManager(CameraInterface):
             return None
 
     def get_depth_mm(self, x: int, y: int) -> float:
-        """(x, y) の深度を mm 単位で返す"""
+        """(x, y) の深度を mm 単位で返す
+        
+        注意: x, y は RGB フレーム座標です。
+        内部で深度フレームに自動的にスケーリングされます。
+        """
         depth_frame = self.get_depth_frame()
         if depth_frame is None:
-            logging.debug(f"深度取得失敗: 深度フレームが None (x={x}, y={y})")
+            logging.warning(f"[get_depth_mm] 深度フレームが None (x={x}, y={y})")
             return 0.0
         
         h, w = depth_frame.shape
-        if not (0 <= x < w and 0 <= y < h):
-            logging.debug(f"座標が範囲外: (x={x}, y={y}), フレーム size=({w}x{h})")
+        
+        # ★ RGB フレーム座標を深度フレーム座標にスケーリング
+        scaled_x, scaled_y = self._scale_rgb_to_depth_coords(x, y)
+        
+        if not (0 <= scaled_x < w and 0 <= scaled_y < h):
+            logging.warning(f"[get_depth_mm] スケーリング後も座標が範囲外: RGB({x}, {y}) -> Depth({scaled_x}, {scaled_y}), フレーム size=({w}x{h})")
             return 0.0
         
-        depth_value = float(depth_frame[y, x])
-        if depth_value > 0:
-            logging.debug(f"深度値取得: ({x}, {y}) -> {depth_value:.1f} mm")
-        return depth_value
+        try:
+            depth_value = float(depth_frame[scaled_y, scaled_x])
+            if depth_value > 0:
+                logging.debug(f"[get_depth_mm] 深度値取得成功: RGB({x}, {y}) -> Depth({scaled_x}, {scaled_y}) = {depth_value:.1f} mm")
+                return depth_value
+            else:
+                logging.warning(f"[get_depth_mm] 深度値が 0 以下: RGB({x}, {y}) -> Depth({scaled_x}, {scaled_y})")
+                # 周囲の深度値から代替値を取得（ノイズ回避）
+                return self._get_nearby_depth_mm(scaled_x, scaled_y, depth_frame)
+        except Exception as e:
+            logging.error(f"[get_depth_mm] 深度値の取得/変換エラー: {e}")
+            return 0.0
+    
+    def _scale_rgb_to_depth_coords(self, x: int, y: int) -> tuple[int, int]:
+        """RGB フレーム座標を深度フレーム座標にスケーリングする
+        
+        Args:
+            x, y: RGB フレーム上の座標
+            
+        Returns:
+            tuple[int, int]: 深度フレーム上の座標
+        """
+        if self._rgb_frame_width <= 0 or self._rgb_frame_height <= 0:
+            return (x, y)
+        
+        scale_x = self._depth_frame_width / self._rgb_frame_width
+        scale_y = self._depth_frame_height / self._rgb_frame_height
+        
+        depth_x = int(x * scale_x)
+        depth_y = int(y * scale_y)
+        
+        logging.debug(f"[_scale_rgb_to_depth_coords] RGB({x}, {y}) -> Depth({depth_x}, {depth_y}) (scale: {scale_x:.3f}, {scale_y:.3f})")
+        
+        return (depth_x, depth_y)
+    
+    def _get_nearby_depth_mm(self, x: int, y: int, depth_frame: Any) -> float:
+        """
+        周囲の深度値から有効な値を探索する（ノイズ対応）
+        
+        Args:
+            x, y: 基準座標
+            depth_frame: 深度フレーム
+            
+        Returns:
+            float: 見つかった有効な深度値（mm）。見つからない場合は 0.0
+        """
+        h, w = depth_frame.shape
+        search_radius = 10  # 検索半径（ピクセル）
+        
+        for dy in range(-search_radius, search_radius + 1):
+            for dx in range(-search_radius, search_radius + 1):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h:
+                    try:
+                        depth_val = float(depth_frame[ny, nx])
+                        if depth_val > 0:
+                            logging.info(f"[_get_nearby_depth_mm] 周囲値から代替深度取得: ({x}, {y}) -> ({nx}, {ny}) = {depth_val:.1f} mm")
+                            return depth_val
+                    except Exception:
+                        pass
+        
+        logging.warning(f"[_get_nearby_depth_mm] 周囲検索でも有効な深度が見つかりません: ({x}, {y})")
+        return 0.0
 
     def get_depth_mm_at(self, x: int, y: int) -> float:
         """互換性維持"""
