@@ -164,6 +164,7 @@ class TrackTargetConfig(QWidget):
             "h_max": 10,
             "s_max": 255,
             "v_max": 255,
+            "min_area": self.ball_tracker.min_area,
         }
 
         # 永続化設定をロード
@@ -188,6 +189,11 @@ class TrackTargetConfig(QWidget):
             self.h_slider.setValue(self.current_config.get("h_min", 0))
             self.s_slider.setValue(self.current_config.get("s_min", 100))
             self.v_slider.setValue(self.current_config.get("v_min", 100))
+
+            # 最小面積スライダーの復元
+            if "min_area" in self.current_config:
+                self.min_area_slider.setValue(self.current_config["min_area"])
+                self.min_area_value_label.setText(f"最小面積: {self.current_config['min_area']} pixels")
         except Exception as e:
             print(f"設定ロードエラー: {e}")
 
@@ -277,31 +283,33 @@ class TrackTargetConfig(QWidget):
         - 検出統計情報をメモリに保存
         """
         try:
-            h_min = self.current_config["h_min"]
+            # 現在設定から HSV の下限値だけ取得（上限は常に 255 に固定）
             s_min = self.current_config["s_min"]
             v_min = self.current_config["v_min"]
-            h_max = self.current_config["h_max"]
-            s_max = self.current_config["s_max"]
-            v_max = self.current_config["v_max"]
 
             if isinstance(frame, np.ndarray):
                 hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)  # type: ignore
+                # 上限は常に最大 (255)
+                s_max_val = 255
+                v_max_val = 255
+
+                # Hue スライダーで設定された範囲を使用
+                h_min = self.current_config["h_min"]
+                h_max = self.current_config["h_max"]
                 lower_bound = np.array([h_min, s_min, v_min], dtype=np.uint8)
-                upper_bound = np.array([h_max, s_max, v_max], dtype=np.uint8)
+                upper_bound = np.array([h_max, s_max_val, v_max_val], dtype=np.uint8)
+
+                mask = cv2.inRange(hsv, lower_bound, upper_bound)  # type: ignore
             else:
                 return
 
-            # マスク生成
-            mask = cv2.inRange(hsv, lower_bound, upper_bound)  # type: ignore
-            
-            # 検出ピクセル数を記録
+            # ピクセル数を記録
             pixel_count = np.count_nonzero(mask)
             self.last_detection_info["pixel_count"] = pixel_count
 
-            # マスク内のピクセルを半透明で画面上に可視化
-            # フレームのコピーを作成してマスク領域に色を付ける
-            overlay = frame.copy()
-            overlay[mask > 0] = [0, 255, 0]  # 緑色でマスク領域を表示
+            # マスク領域を半透明の緑で可視化
+            overlay = frame.copy()  # type: ignore
+            overlay[mask > 0] = [0, 255, 0]  # type: ignore
             alpha = 0.3
             frame = cv2.addWeighted(frame, 1 - alpha, overlay, alpha, 0)  # type: ignore
 
@@ -317,31 +325,31 @@ class TrackTargetConfig(QWidget):
             # 最小面積でフィルタ
             contours = [c for c in contours if cv2.contourArea(c) >= self.ball_tracker.min_area]  # type: ignore
             self.last_detection_info["contour_count"] = len(contours)
-            
+
             if not contours:
                 self.last_detection_info["max_area"] = 0
                 self.last_detection_info["detected_position"] = None
                 return
 
-            # すべての輪郭を薄い青で描画
+            # 全輪郭を薄い青で描画
             cv2.drawContours(frame, contours, -1, (255, 100, 0), 2)  # type: ignore
 
-            # 最大輪郭を検出
+            # 最大輪郭を取得してハイライト
             largest_contour = max(contours, key=cv2.contourArea)  # type: ignore
             max_area = cv2.contourArea(largest_contour)  # type: ignore
             self.last_detection_info["max_area"] = int(max_area)
-            
+
             x, y, w, h = cv2.boundingRect(largest_contour)  # type: ignore
             center_x = x + w // 2
             center_y = y + h // 2
             self.last_detection_info["detected_position"] = (center_x, center_y)
 
-            # 最大輪郭を赤枠で強調
-            pen = QPen(QColor(0, 0, 255), 3)
+            # 緑枠で最大輪郭を強調（太さ10）
+            pen = QPen(QColor(0, 255, 0), 10)
             painter.setPen(pen)
             painter.drawRect(x, y, w, h)
-            
-            # 中心に大きな青い円を描画（検出位置をマーク）
+
+            # 中心に青い円描画
             circle_pen = QPen(QColor(0, 255, 255), 2)
             painter.setPen(circle_pen)
             painter.drawEllipse(center_x - 10, center_y - 10, 20, 20)
@@ -390,6 +398,12 @@ class TrackTargetConfig(QWidget):
             val_low=self.current_config["v_min"],
             val_high=self.current_config["v_max"]
         )
+        # デバッグ出力
+        print(f"[DEBUG] set_track_ball called with: lower={list(lower_bound)}, upper={list(upper_bound)}")
+        # デバッグ出力: 現在の設定を確認
+        print(f"[DEBUG] current_config h_min={self.current_config['h_min']}, h_max={self.current_config['h_max']}")
+        # デバッグ出力: tracked_ball 内容を確認
+        print(f"[DEBUG] ball_tracker.tracked_ball = {self.ball_tracker.get_track_ball()}")
 
         self.config_changed.emit(self.current_config)
         self.persist_config()
@@ -408,6 +422,8 @@ class TrackTargetConfig(QWidget):
         self.ball_tracker.set_min_area(value)
         self.min_area_slider.setValue(value)
         self.min_area_value_label.setText(f"最小面積: {value} pixels")
+        # 設定に最小面積を保存
+        self.current_config["min_area"] = value
         self.persist_config()
         print(f"Min area set to {value} pixels")
     

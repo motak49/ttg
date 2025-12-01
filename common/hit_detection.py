@@ -85,6 +85,11 @@ class FrontCollisionDetector:
         self._prev_center = self._last_center
         self._last_center = (x, y)
 
+        # 深度チェック: 深度が0.00の場合は衝突と判定しない（無効な深度値）
+        if depth <= 0.0:
+            return None
+        
+#        if hit_detected and depth <= COLLISION_DEPTH_THRESHOLD:
         if hit_detected and depth <= COLLISION_DEPTH_THRESHOLD:
             # 衝突判定と深度判定の両方が満たされた場合のみヒットを返す
             self._collision_state = "none"

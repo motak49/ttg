@@ -8,28 +8,34 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QMessageBox,
+    QSizePolicy,
 )
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QCloseEvent
 from PyQt6.QtCore import Qt, QTimer
+from typing import Any, Optional
 from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
 from backend.moving_target_manager import MovingTargetManager
 from common.hit_detection import FrontCollisionDetector
 import cv2
+import numpy as np
 from pathlib import Path
 import os
 from backend.target_manager import TargetManager
 
 class MovingTargetViewer(QMainWindow):
     """動くターゲットを表示するウィンドウ"""
+    front_detector: FrontCollisionDetector
+    zoom_factor: float = 1.0
+    timer: QTimer
     
     def __init__(
         self,
         camera_manager: CameraManager,
         screen_manager: ScreenManager,
         ball_tracker: BallTracker,
-        front_detector=None,
+        front_detector: Optional[FrontCollisionDetector] = None,
     ):
         super().__init__()
         self.setWindowTitle("動くターゲット表示")
@@ -52,15 +58,25 @@ class MovingTargetViewer(QMainWindow):
         # カメラフレーム表示用ラベル
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
+        # Make the image label expand to fill available space
+        self.image_label.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                       QSizePolicy.Policy.Expanding)
+
         # 検出情報ラベル（デバッグ用）
         self.detection_label = QLabel()
         self.detection_label.setText("検出情報: -")
         self.detection_label.setStyleSheet("background-color: #f0f0f0; padding: 4px;")
+        # Make the detection label expand horizontally but keep fixed height
+        self.detection_label.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                            QSizePolicy.Policy.Fixed)
+
+        # ズームコントロール（削除済み）
         
         # レイアウト設定
         layout = QVBoxLayout()
         layout.addWidget(self.detection_label)
+
+        # ズームコントロールレイアウト（削除済み）
         layout.addWidget(self.image_label)
         
         central_widget = QWidget()
@@ -71,8 +87,11 @@ class MovingTargetViewer(QMainWindow):
         from common.config import TARGET_FPS
         self.timer_interval = 1000 // TARGET_FPS  # ms
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_frame)
+        self.timer.timeout.connect(self.update_frame)  # type: ignore
         self.timer.start(self.timer_interval)
+        
+        # Set minimum window size to prevent extreme shrinking
+        self.setMinimumSize(400, 300)
         
         # 初期化
         self.is_initialized = False
@@ -124,8 +143,8 @@ class MovingTargetViewer(QMainWindow):
         try:
             # カメラからフレームを取得
             frame = self.camera_manager.get_frame()
-            if frame is None:
-                print("カメラフレームの取得に失敗しました")
+            if not isinstance(frame, np.ndarray):
+                print("カメラフレームが取得できませんまたは無効です")
                 return
                 
             # 動くターゲットを更新
@@ -139,14 +158,14 @@ class MovingTargetViewer(QMainWindow):
                     QMessageBox.information(self, "当たり！", "ボールがターゲットに当たった！")
 
             # 前面スクリーンへの衝突判定（深度を含む検出結果で判定）
-            detected = self.ball_tracker.get_hit_area(frame)
+            detected = self.ball_tracker.get_hit_area(frame)  # type: ignore[arg-type]
             hit = self.front_detector.update_and_check(detected)
             if hit is not None:
                 # 前面スクリーンに当たった場合の表示/処理
                 QMessageBox.information(self, "衝突検知", "前面スクリーンに衝突しました！")
             
             # 検出情報を取得（改善: 両ゲームモード共通機能）
-            detection_info = self.ball_tracker.get_detection_info(frame)
+            detection_info = self.ball_tracker.get_detection_info(frame)  # type: ignore[arg-type]
             if detection_info:
                 if detection_info["detected"]:
                     status = f"✓ 検出中 | 輪郭: {detection_info['contour_count']} | 面積: {detection_info['max_area']:.0f}"
@@ -156,8 +175,24 @@ class MovingTargetViewer(QMainWindow):
                     self.detection_label.setStyleSheet("background-color: #ffebee; padding: 4px;")
                 self.detection_label.setText(status)
             
-            # フレームにターゲットを描画
-            annotated_frame = self._draw_targets(frame)
+            # ウィンドウサイズに合わせてフレームをスケーリング
+            label_w = self.image_label.width()
+            label_h = self.image_label.height()
+            # Ensure we are working with a numpy array
+            frame_np: np.ndarray = frame
+            h, w = frame_np.shape[:2]
+            scale_w = label_w / w if w > 0 else 1.0  # type: ignore
+            scale_h = label_h / h if h > 0 else 1.0  # type: ignore
+            # 保持アスペクト比で最小スケールを使用
+            self.zoom_factor = min(scale_w, scale_h, 1.0)  # type: ignore
+            if self.zoom_factor != 1.0:
+                new_w = int(w * self.zoom_factor)  # type: ignore
+                new_h = int(h * self.zoom_factor)  # type: ignore
+                display_frame = cv2.resize(frame_np.astype(np.uint8), (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            else:
+                display_frame = frame_np
+
+            annotated_frame = self._draw_targets(display_frame)
             
             # 画像を表示
             self._display_frame(annotated_frame)
@@ -165,7 +200,7 @@ class MovingTargetViewer(QMainWindow):
         except Exception as e:
             print(f"フレーム更新エラー: {e}")
     
-    def _draw_targets(self, frame) -> QImage:
+    def _draw_targets(self, frame: Any) -> QImage:
         """ターゲットをフレームに描画"""
         try:
             # 画像をQImageに変換
@@ -180,12 +215,12 @@ class MovingTargetViewer(QMainWindow):
             # NumPy配列をbytesに変換してQImageに渡す
             bytes_per_line = width * 3
             qimage = QImage(
-                bgr_frame.tobytes(),
+                bgr_frame.tobytes(),  # type: ignore
                 width,
                 height,
                 bytes_per_line,
                 QImage.Format.Format_BGR888
-            )
+            )  # type: ignore
             
             # QPainterで描画
             painter = QPainter(qimage)
@@ -195,6 +230,9 @@ class MovingTargetViewer(QMainWindow):
             targets = self.moving_target_manager.get_targets()
             for target in targets:
                 x, y = target.position
+                # ズーム倍率を座標に適用
+                x = int(x * self.zoom_factor)
+                y = int(y * self.zoom_factor)
                 # 画像ファイルから読み込み、リサイズして描画
                 try:
                     # プロジェクトルートからの絶対パス取得
@@ -242,7 +280,7 @@ class MovingTargetViewer(QMainWindow):
             print(f"描画エラー: {e}")
             return QImage()
     
-    def _display_frame(self, qimage):
+    def _display_frame(self, qimage: QImage) -> None:
         """フレームをラベルに表示"""
         try:
             if not qimage.isNull():
@@ -254,8 +292,12 @@ class MovingTargetViewer(QMainWindow):
                 ))
         except Exception as e:
             print(f"表示エラー: {e}")
-    
-    def closeEvent(self, a0):
+
+    # ズームスライダーは削除されました
+
+    def closeEvent(self, a0: Optional[QCloseEvent] = None) -> None:
         """ウィンドウクローズ時の処理"""
-        self.timer.stop()
+        if hasattr(self, 'timer') and self.timer.isActive():
+            self.timer.stop()
         print("動くターゲットビューアーが閉じられました")
+        super().closeEvent(a0)

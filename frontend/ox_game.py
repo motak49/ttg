@@ -4,7 +4,7 @@ OXゲーム（Tick & Cross）実装
 
 - カメラ映像を表示し、リアルタイムでボールヒット座標を取得
 - ヒット座標から 3×3 グリッドのセルへ変換
-- プレイヤー交代でマーカー (〇/✕) を配置
+- プレイヤー交代でマーカー (〇/?) を配置
 - 勝利判定後にメッセージ表示し、盤面をリセット
 
 依存:
@@ -16,6 +16,7 @@ OXゲーム（Tick & Cross）実装
 """
 
 import numpy as np
+import math
 from typing import Tuple, Optional
 
 from PyQt6.QtWidgets import (
@@ -26,7 +27,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
-from common.config import OX_GAME_TARGET_FPS, TARGET_FPS, timer_interval_ms, GRID_LINE_WIDTH
+from common.config import OX_GAME_TARGET_FPS, timer_interval_ms, GRID_LINE_WIDTH, BLUE_BORDER_WIDTH
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QCloseEvent
 
 from backend.camera_manager import CameraManager
@@ -55,16 +56,19 @@ class OxGame(QWidget):
         # 永続化されたスクリーン領域・深度情報をロード
         self.screen_manager.load_log()
         self.ball_tracker = ball_tracker
+        # ★ ball_tracker にカメラマネージャーの参照を設定（リアルタイム深度取得用）
+        self.ball_tracker.camera_manager = camera_manager
 
         # ゲームロジック
         self.game_logic = GameLogic()
         self.game_logic.start_game("tick_cross")
-        # 1: 壱号 (〇), 2: 弐号 (✕)
+        # 1: 壱号 (〇), 2: 弐号 (?)
         self.current_player = 1
         self.debug = True
         self.collision_shown = False  # whether large blue circle has been drawn for current turn
         self.last_collision_point: Optional[Tuple[int, int]] = None
         self.first_hit_coord: Optional[Tuple[int, int]] = None
+        self.collision_debug_log: str = ""  # 衝突判定デバッグログ
 
         # UI 要素
         self.fps_label = QLabel(self)
@@ -91,17 +95,23 @@ class OxGame(QWidget):
         self.detection_label.setText("検出情報: -")
         self.detection_label.setStyleSheet("background-color: #f0f0f0; padding: 4px;")
 
+        # 衝突深度表示ラベル
+        self.hit_depth_label = QLabel(self)
+        self.hit_depth_label.setText("衝突深度: -")
+        self.hit_depth_label.setStyleSheet("background-color: #e0f7fa; padding: 4px;")
+
         layout = QVBoxLayout()
         layout.addWidget(self.fps_label)
         layout.addWidget(self.player_label)
         layout.addWidget(self.detection_label)
+        layout.addWidget(self.hit_depth_label)
         layout.addWidget(self.video_label)
         self.setLayout(layout)
 
         # タイマーでフレーム更新 & ヒット判定
         self.tracking_active = True
         self.timer = QTimer(self)
-        self.timer.timeout.connect(self._update_frame)
+        self.timer.timeout.connect(self._update_frame)  # type: ignore
         import logging
         fps_setting = OX_GAME_TARGET_FPS
         timer_interval = timer_interval_ms(fps_setting)
@@ -112,7 +122,7 @@ class OxGame(QWidget):
         if self.current_player == 1:
             name, marker = "壱号", "〇"
         else:
-            name, marker = "弐号", "✕"
+            name, marker = "弐号", "?"
         self.player_label.setText(f"現在のプレイヤー: {name} ({marker})")
 
     def _process_hit(self, hit_area: Tuple[int, int, float]) -> None:
@@ -142,9 +152,9 @@ class OxGame(QWidget):
             self._update_player_label()
 
     def _draw_markers(self, painter: QPainter, cell_w: int, cell_h: int) -> None:
-        """盤面上のマーカー (〇/✕) を描画"""
+        """盤面上のマーカー (〇/?) を描画"""
         for (r, c), pid in self.game_logic.board.items():
-            marker = "〇" if pid == 1 else "✕"
+            marker = "〇" if pid == 1 else "?"
             color = QColor("#FF0000") if pid == 1 else QColor("#000000")
             painter.setPen(QPen(color))
             font = QFont()
@@ -216,7 +226,7 @@ class OxGame(QWidget):
         # exec() はモーダルでブロックし、ユーザーの操作を待つ
         msg.exec()
         # OK 押下後1秒スリープ
-        QTimer.singleShot(1000, self.resume_tracking)
+        QTimer.singleShot(1000, self.resume_tracking)  # type: ignore
 
     def _update_frame(self) -> None:
         """カメラフレーム取得 → UI 更新 + ヒット判定"""
@@ -255,7 +265,7 @@ class OxGame(QWidget):
                     h,
                     bytes_per_line,
                     img_format,
-                )
+                )  # type: ignore
             else:
                 # 既に QImage の場合はそのまま使用
                 q_img = frame
@@ -263,28 +273,33 @@ class OxGame(QWidget):
         pix = QPixmap.fromImage(q_img)
 
         # デバッグ用トラッキング情報取得＆検出情報を表示
-        detected = None
         hit = None
         detection_info = None
+        realtime_depth = None  # リアルタイム深度を保持
         if isinstance(frame, np.ndarray):
-            detected = self.ball_tracker.get_hit_area(frame)
-            hit = self.ball_tracker.check_target_hit(frame)
+            # detected = self.ball_tracker.get_hit_area(frame)  # not used
+            hit = self.ball_tracker.check_target_hit(frame)  # type: ignore[arg-type]
             # 検出情報を取得（改善: 両ゲームモード共通機能）
-            detection_info = self.ball_tracker.get_detection_info(frame)
+            detection_info = self.ball_tracker.get_detection_info(frame)  # type: ignore[arg-type]
+            # リアルタイム深度を取得（ボール検出時のみ）
+            if detection_info and detection_info.get("detected"):
+                detected_result = self.ball_tracker.detect_ball(frame)  # type: ignore[arg-type]
+                if detected_result is not None:
+                    _, _, realtime_depth = detected_result
         else:
-            detected = None
             hit = None
             detection_info = None
+            realtime_depth = None
         
         # 検出情報ラベルを更新
         if detection_info:
             if detection_info["detected"]:
                 grid_pos = detection_info.get("grid_position")
                 grid_str = f"({grid_pos[0]}, {grid_pos[1]})" if grid_pos else "N/A"
-                status = f"✓ 検出中 | 輪郭: {detection_info['contour_count']} | 面積: {detection_info['max_area']:.0f} | グリッド: {grid_str}"
+                status = f"? 検出中 | 輪郭: {detection_info['contour_count']} | 面積: {detection_info['max_area']:.0f} | グリッド: {grid_str}"
                 self.detection_label.setStyleSheet("background-color: #e8f5e9; padding: 4px;")
             else:
-                status = f"✗ 未検出 | ピクセル: {detection_info['pixel_count']}"
+                status = f"? 未検出 | ピクセル: {detection_info['pixel_count']}"
                 self.detection_label.setStyleSheet("background-color: #ffebee; padding: 4px;")
             self.detection_label.setText(status)
 
@@ -299,33 +314,55 @@ class OxGame(QWidget):
         cell_h = height // 3
         self._draw_markers(painter, cell_w, cell_h)
 
-        # デバッグ描画: 検出されたボール位置 (緑の円) と深度表示
-        if self.debug and self.tracking_active and detected is not None:
-            x, y, depth = detected
-            painter.setPen(QPen(QColor(0, 255, 0), 3))
-            size = 30
-            painter.drawRect(x - size // 2, y - size // 2, size, size)
-            # 深度テキスト表示
-            painter.setPen(QPen(QColor(0, 255, 0), 1))
-            painter.drawText(x + size // 2 + 2, y - size // 2 - 2, f"{depth:.2f}")
+        # 緑枠で検出対象をハイライト
+        if self.tracking_active and detection_info and detection_info.get("detected"):
+            center = detection_info.get("detected_position")
+            max_area = detection_info.get("max_area", 0)
+            if center is not None:
+                side = int(math.sqrt(max_area)) if max_area > 0 else 30
+                half_side = max(side // 2, 10)
+                x, y = center
+                painter.setPen(QPen(QColor(0, 255, 0), 10))
+                painter.drawRect(x - half_side, y - half_side, half_side * 2, half_side * 2)
+                
+                # ★ 常に検出時の深度情報を緑テキストで表示（30px）
+                # リアルタイム深度を表示（検出時のみ）
+                display_depth = realtime_depth if realtime_depth is not None else (self.screen_manager.get_screen_depth() or 1.0)
+                depth_text = f"{display_depth:.2f}m"
+                painter.setPen(QPen(QColor(0, 255, 0), 2))
+                font = QFont()
+                font.setPointSize(30)
+                painter.setFont(font)
+                # ボール位置の下に表示
+                painter.drawText(x - 30, y + 40, depth_text)
 
-        # ヒットが検出された場合は青い円で強調し深度表示
+        # ヒットが検出された場合は青枠でハイライトし、座標ポップアップを表示
         if self.debug and self.tracking_active and hit is not None:
             hx, hy, hdepth = hit
+            # 更新深度ラベル
+            self.hit_depth_label.setText(f"衝突深度: {hdepth:.2f} m ? HIT!")
+            self.hit_depth_label.setStyleSheet("background-color: #fff59d; padding: 4px;")
+            # 青枠描画（border: BLUE_BORDER_WIDTH）
             if not self.collision_shown:
-                painter.setPen(QPen(QColor(0, 0, 255), 3))
-                radius_hit = 50
-                painter.drawEllipse(hx - radius_hit, hy - radius_hit, radius_hit * 2, radius_hit * 2)
+                side = int(math.sqrt(detection_info.get("max_area", 0))) if detection_info else 30
+                half_side = max(side // 2, 10)
+                painter.setPen(QPen(QColor(0, 0, 255), BLUE_BORDER_WIDTH))
+                painter.drawRect(hx - half_side, hy - half_side, half_side * 2, half_side * 2)
                 self.collision_shown = True
+            # 座標ポップアップ表示
+            QMessageBox.information(self, "衝突座標", f"x: {hx}, y: {hy}")
             # 深度テキスト表示（青）
             painter.setPen(QPen(QColor(0, 0, 255), 1))
             painter.drawText(hx + 52, hy - 48, f"{hdepth:.2f}")
-            # 衝突座標をターミナルに出力
-            print(f"Hit at ({hx}, {hy})")
-            # 衝突座標を保持
+            print(f"Hit at ({hx}, {hy}), depth={hdepth:.2f}m")
             self.last_collision_point = (hx, hy)
             # 衝突検知時にゲーム停止 → OK ボタンで再開
             self._show_collision_stop_message()
+        elif self.tracking_active and detection_info and detection_info.get("detected"):
+            # ボール検出されているが、衝突判定されていない場合のデバッグ情報
+            detected_pos = detection_info.get("detected_position")
+            if detected_pos:
+                self.collision_debug_log = f"検出: ({detected_pos[0]}, {detected_pos[1]}) 深度: {self.screen_manager.get_screen_depth():.2f}m → 衝突判定待機中"
         # 最初にヒットした座標を塗りつぶしの青円で固定表示
         if self.first_hit_coord is not None:
             fx, fy = self.first_hit_coord

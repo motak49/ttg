@@ -1,6 +1,7 @@
 # camera_manager.py（簡素版）
 import logging
 from typing import Optional, Any
+from datetime import timedelta
 
 import depthai as dai
 from PyQt6.QtCore import Qt
@@ -107,9 +108,9 @@ class CameraManager(CameraInterface):
                 mono_right.out.link(stereo.right)
                 
                 self.depth_stream = stereo.depth.createOutputQueue()
-                logging.debug("Depth stream created successfully")
+                logging.info("[initialize_camera] ? Depth stream created successfully")
             except Exception as depth_err:
-                logging.warning(f"深度ストリーム設定エラー（無視）: {depth_err}")
+                logging.warning(f"[initialize_camera] 深度ストリーム設定エラー（無視）: {depth_err}")
                 self.depth_stream = None
 
             # ステップ 6: パイプラインを context manager で開始（depthai 3.1.0対応）
@@ -158,25 +159,51 @@ class CameraManager(CameraInterface):
             return placeholder
 
     def get_depth_frame(self) -> Optional[Any]:
-        """最新の深度フレームを取得"""
         if not self._initialized or self.depth_stream is None:
+            logging.debug("Depth stream not initialized")
             return None
         try:
-            depth_msg = self.depth_stream.get()
-            return depth_msg.getFrame() if depth_msg else None
+            # DepthAI 3.1 新 API: timeout as timedelta
+            depth_msg = self.depth_stream.get(timeout=timedelta(milliseconds=10))
+        except TypeError:
+            # 旧 API が残っている場合のフォールバック
+            try:
+                depth_msg = self.depth_stream.get(timeoutMs=10)
+            except Exception as e:
+                logging.warning(f"Depth stream get() failed (fallback): {e}")
+                depth_msg = None
         except Exception as e:
-            logging.error(f"深度フレーム取得エラー: {e}")
+            logging.warning(f"Depth stream get() error: {e}")
+            depth_msg = None
+
+        if depth_msg is None:
+            return None
+        try:
+            frame = depth_msg.getFrame()
+            logging.debug(
+                f"Depth frame obtained: shape={frame.shape}, dtype={frame.dtype}"
+            )
+            return frame
+        except Exception as e:
+            logging.error(f"Failed to extract depth frame: {e}")
             return None
 
     def get_depth_mm(self, x: int, y: int) -> float:
         """(x, y) の深度を mm 単位で返す"""
         depth_frame = self.get_depth_frame()
         if depth_frame is None:
+            logging.debug(f"深度取得失敗: 深度フレームが None (x={x}, y={y})")
             return 0.0
+        
         h, w = depth_frame.shape
         if not (0 <= x < w and 0 <= y < h):
+            logging.debug(f"座標が範囲外: (x={x}, y={y}), フレーム size=({w}x{h})")
             return 0.0
-        return float(depth_frame[y, x])
+        
+        depth_value = float(depth_frame[y, x])
+        if depth_value > 0:
+            logging.debug(f"深度値取得: ({x}, {y}) -> {depth_value:.1f} mm")
+        return depth_value
 
     def get_depth_mm_at(self, x: int, y: int) -> float:
         """互換性維持"""

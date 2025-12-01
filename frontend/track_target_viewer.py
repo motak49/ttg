@@ -19,6 +19,7 @@ import logging
 from common.config import TRACK_TARGET_CONFIG_FPS, timer_interval_ms
 import cv2
 import numpy as np
+from numpy.typing import NDArray
 from common.logger import logger
 
 
@@ -132,47 +133,44 @@ class TrackTargetViewer(QWidget):
             # フレームサイズ取得
             width = pix.width()
             height = pix.height()
-
-            # 現在設定されているトラッキング対象色を表示
-            try:
-                tracked_ball = self.ball_tracker.get_track_ball()
-                if tracked_ball is not None:
-                    # 設定された色範囲を取得
-                    color_range = tracked_ball["color_range"]
-                    lower_bound, upper_bound = color_range
-                    # 色の情報を表示
-                    color_name = self._get_color_name_from_range(lower_bound, upper_bound)
-                    if color_name:
-                        font = painter.font()
-                        font.setPointSize(16)
-                        painter.setFont(font)
-                        painter.setPen(QColor(255, 0, 0))  # 赤色で表示
-                        painter.drawText(10, 30, f"現在のトラッキング対象: {color_name}")
-
-                    # 色範囲を視覚的に表示（追跡対象の色をハイライト）
-                    self._draw_tracking_highlight(painter, frame, lower_bound, upper_bound)
-            except Exception as e:
-                print(f"トラッキング対象表示エラー: {e}")
-
-            # 元のフレーム描画
-            if self.isVisible():  # 最終的なウィンドウ状態確認
-                self.video_label.setPixmap(
-                    pix.scaled(
-                        self.video_label.size(),
-                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
-            painter.end()  # 必ずパイプを閉じる
         except Exception as e:
-            # QPainter関連のエラーをキャッチして安全に終了
-            print(f"描画エラー: {e}")
-            try:
-                if 'painter' in locals() and painter.isActive():
-                    painter.end()
-            except Exception as e:
-                print(f"エラーが発生しました: {e}")
+            logging.error(f"描画準備中のエラー: {e}")
             return
+
+        # 現在設定されているトラッキング対象色を表示
+        try:
+            tracked_ball = self.ball_tracker.get_track_ball()
+            if tracked_ball is not None:
+                # 設定された色範囲を取得
+                color_range = tracked_ball["color_range"]
+                lower_bound, upper_bound = color_range
+                # 色の情報を表示
+                color_name = self._get_color_name_from_range(lower_bound, upper_bound)
+                if color_name:
+                    font = painter.font()
+                    font.setPointSize(16)
+                    painter.setFont(font)
+                    painter.setPen(QColor(255, 0, 0))  # 赤色で表示
+                    painter.drawText(10, 30, f"現在のトラッキング対象: {color_name}")
+
+                # 色範囲を視覚的に表示（追跡対象の色をハイライト）
+                if isinstance(frame, np.ndarray):
+                    self._draw_tracking_highlight(painter, frame, lower_bound, upper_bound)
+                    # デバッグ出力
+                    print(f"[Viewer] Drawing highlight with range: lower={list(lower_bound)}, upper={list(upper_bound)}")
+        except Exception as e:
+            print(f"トラッキング対象表示エラー: {e}")
+
+        # 元のフレーム描画
+        if self.isVisible():  # 最終的なウィンドウ状態確認
+            self.video_label.setPixmap(
+                pix.scaled(
+                    self.video_label.size(),
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        painter.end()  # 必ずパイプを閉じる
 
     def _get_color_name_from_range(self, lower_bound: np.ndarray, upper_bound: np.ndarray) -> str:
         """HSV範囲から色名を取得"""
@@ -186,7 +184,7 @@ class TrackTargetViewer(QWidget):
         else:
             return "不明"  # デフォルトは不明
 
-    def _draw_tracking_highlight(self, painter: QPainter, frame: np.ndarray, lower_bound: np.ndarray, upper_bound: np.ndarray) -> None:
+    def _draw_tracking_highlight(self, painter: QPainter, frame: np.ndarray, lower_bound: NDArray[np.uint8], upper_bound: NDArray[np.uint8]) -> None:
         """追跡対象の色範囲を視覚的にハイライト表示"""
         try:
             # フレームがnumpy配列でない場合は処理しない

@@ -19,18 +19,18 @@ TARGET_FPS = OX_GAME_TARGET_FPS
 
 # TrackTargetConfig 用フレームレート（ハードウェア上限: 120fps）
 TRACK_TARGET_CONFIG_FPS = 120
-GRID_LINE_WIDTH = 20  # 線幅 (ピクセル) ? デフォルトは 2px から変更
+GRID_LINE_WIDTH = 40  # 線幅 (ピクセル) ? デフォルトは 2px から変更
+BLUE_BORDER_WIDTH = 10  # 青枠の太さ（ピクセル）
 TIMER_INTERVAL_MS = int(1000 / TARGET_FPS)
 
 # 衝突判定用深度閾値（メートル単位、スクリーン前面からの距離）
-COLLISION_DEPTH_THRESHOLD = 1.65   # 例: 150mm (= 15cm)
+COLLISION_DEPTH_THRESHOLD = 2.0   # Updated threshold to accommodate measured depth
 
 # 深度測定の有効範囲上限（mm）
-MAX_VALID_DEPTH_MM = 5000   # 例: 5m までを有効とみなす
+MAX_VALID_DEPTH_MM = 3000   # 例: 5m までを有効とみなす
 
 # 角度による衝突判定を有効にするか（デフォルトは無効）
-#ENABLE_ANGLE_COLLISION_CHECK = False
-ENABLE_ANGLE_COLLISION_CHECK = True
+ENABLE_ANGLE_COLLISION_CHECK = False
 
 # 設定ファイルパス
 TRACKED_TARGET_CONFIG_PATH = "TrackBallLogs/tracked_target_config.json"

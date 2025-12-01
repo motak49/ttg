@@ -36,31 +36,33 @@ class BallTracker(BallTrackerInterface):
         # 衝突状態管理
         # 前面衝突判定は共通モジュールに委譲。外部から渡された検知器があればそれを使用。
         self._collision_detector: FrontCollisionDetector = (collision_detector if collision_detector is not None else FrontCollisionDetector(self.screen_manager))
+        # カメラマネージャーへの参照（リアルタイム深度取得用）
+        self.camera_manager: Optional[Any] = None
 
     def set_target_color(self, color: str) -> None:
         """
         トラッキング対象のボール色を設定します。
-        現在は「赤」または「ピンク」の文字列で指定し、内部的に対応する色範囲を保持します。
+        "赤" は Hue が 0‑10 と 170‑179 の二重範囲で扱います。
+        "ピンク" は別の HSV 範囲です。
 
         Args:
             color (str): "赤" または "ピンク"
         """
-        # 赤系は Hue が 0‑10 と 160‑180 の二重範囲で扱い、Saturation/Value は
-        # デフォルト 100‑255 に設定。UI から調整可能にする
         if color == "赤":
-            # 赤系は二重レンジだがテスト互換性のため color_range を保持
-            lower = np.array([0, 100, 100], dtype=np.uint8)
-            upper = np.array([10, 255, 255], dtype=np.uint8)
+            # 二つの Hue 範囲をリストで保持
+            lower1 = np.array([0, 100, 100], dtype=np.uint8)
+            upper1 = np.array([10, 255, 255], dtype=np.uint8)
+            lower2 = np.array([170, 100, 100], dtype=np.uint8)
+            upper2 = np.array([179, 255, 255], dtype=np.uint8)
             self.tracked_ball = {
                 "type": "red_like",
-                "color_range": (lower, upper),
+                "color_range": [(lower1, upper1), (lower2, upper2)],
                 "sat_low": 100,
                 "sat_high": 255,
                 "val_low": 100,
                 "val_high": 255
             }
         elif color == "ピンク":
-            # ピンクも赤系に準じて扱う（既存テスト期待値に合わせる）
             lower = np.array([140, 100, 100], dtype=np.uint8)
             upper = np.array([170, 255, 255], dtype=np.uint8)
             self.tracked_ball = {
@@ -122,17 +124,26 @@ class BallTracker(BallTrackerInterface):
 
         # カラー範囲を用いてボールを抽出
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        # 赤色は Hue が 0‑10 と 160‑180 の二重範囲で扱う
-        lower1 = np.array([0,   self.tracked_ball["sat_low"],  self.tracked_ball["val_low"]], dtype=np.uint8)
-        upper1 = np.array([10,  self.tracked_ball["sat_high"], self.tracked_ball["val_high"]], dtype=np.uint8)
-
-        lower2 = np.array([160, self.tracked_ball["sat_low"],  self.tracked_ball["val_low"]], dtype=np.uint8)
-        upper2 = np.array([179, self.tracked_ball["sat_high"], self.tracked_ball["val_high"]], dtype=np.uint8)
-
-        mask1 = cv2.inRange(hsv, lower1, upper1)
-        mask2 = cv2.inRange(hsv, lower2, upper2)
-        # Combine masks (ignore type warnings for static analysis)
-        mask = cv2.bitwise_or(mask1, mask2)  # type: ignore
+        # カラー範囲は tracked_ball["color_range"] に保持されている。
+        # 単一範囲または二重範囲に対応し、マスクを生成する。
+        color_range = self.tracked_ball["color_range"]
+        # Build a list of (lower, upper) numpy arrays for masking
+        ranges: List[Tuple[np.ndarray, np.ndarray]] = []
+        if isinstance(color_range, tuple) and isinstance(color_range[0], np.ndarray):
+            lower, upper = color_range
+            ranges.append((lower, upper))
+        else:
+            for item in color_range:  # type: ignore
+                if (
+                    isinstance(item, tuple)
+                    and isinstance(item[0], np.ndarray)
+                    and isinstance(item[1], np.ndarray)
+                ):
+                    ranges.append((item[0], item[1]))
+        mask: NDArray[np.uint8] = np.zeros(hsv.shape[:2], dtype=np.uint8)
+        for lo, hi in ranges:
+            cur_mask = cv2.inRange(hsv, lo, hi)
+            mask = cv2.bitwise_or(mask, cur_mask)  # type: ignore
 
         # マスクから輪郭を検出
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # type: ignore
@@ -152,7 +163,24 @@ class BallTracker(BallTrackerInterface):
         ball_x = x + w // 2
         ball_y = y + h // 2
 
-        depth = self.screen_manager.get_screen_depth() or 1.0
+        # ★ リアルタイム深度を取得（カメラマネージャーから）
+        # カメラマネージャーが設定されている場合はそちらから取得
+        depth: float = 0.0
+        if self.camera_manager is not None:
+            try:
+                depth_mm = self.camera_manager.get_depth_mm(ball_x, ball_y)
+                if depth_mm > 0:
+                    depth = depth_mm / 1000.0  # mm → m に変換
+                else:
+                    # 深度フレームが無効な場合のフォールバック
+                    depth = self.screen_manager.get_screen_depth() or 0.0
+            except Exception as e:
+                print(f"リアルタイム深度取得エラー: {e}")
+                depth = self.screen_manager.get_screen_depth() or 0.0
+        else:
+            # カメラマネージャーが設定されていない場合は スクリーン深度を使用
+            depth = self.screen_manager.get_screen_depth() or 0.0
+        
         return (ball_x, ball_y, depth)
 
     def get_hit_area(self, frame: NDArray[np.uint8]) -> Optional[Tuple[int, int, float]]:
@@ -294,27 +322,41 @@ class BallTracker(BallTrackerInterface):
                 "detected_position": None,
                 "grid_position": None,
             }
-        
+
         try:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)  # type: ignore
-            lower1 = np.array([0, self.tracked_ball["sat_low"], self.tracked_ball["val_low"]], dtype=np.uint8)
-            upper1 = np.array([10, self.tracked_ball["sat_high"], self.tracked_ball["val_high"]], dtype=np.uint8)
-            lower2 = np.array([160, self.tracked_ball["sat_low"], self.tracked_ball["val_low"]], dtype=np.uint8)
-            upper2 = np.array([179, self.tracked_ball["sat_high"], self.tracked_ball["val_high"]], dtype=np.uint8)
-            
-            mask1 = cv2.inRange(hsv, lower1, upper1)  # type: ignore
-            mask2 = cv2.inRange(hsv, lower2, upper2)  # type: ignore
-            mask = cv2.bitwise_or(mask1, mask2)  # type: ignore
-            
-            pixel_count = np.count_nonzero(mask)
-            
+
+            # カラー範囲は tracked_ball["color_range"] に保持されている。
+            # 単一または複数の (lower, upper) ペアでマスクを生成。
+            color_range = self.tracked_ball["color_range"]
+            # Normalize color_range to a simple list of (lower, upper) tuples
+            ranges = []
+            if isinstance(color_range, tuple) and len(color_range) == 2 and isinstance(color_range[0], np.ndarray):
+                # Single range case
+                ranges.append((color_range[0], color_range[1]))
+            else:
+                for item in color_range:  # type: ignore
+                    if isinstance(item, tuple) and len(item) == 2:
+                        lo, hi = item
+                        if isinstance(lo, np.ndarray) and isinstance(hi, np.ndarray):
+                            ranges.append((lo, hi))
+            # If no valid ranges were found, fallback to empty list (no detection)
+
+            # Initialize mask as zeros matching the hue channel size
+            mask: NDArray[np.uint8] = np.zeros(hsv.shape[:2], dtype=np.uint8)
+            for lo, hi in ranges:
+                cur_mask = cv2.inRange(hsv, lo, hi)
+                mask = cv2.bitwise_or(mask, cur_mask)  # type: ignore
+
+            # Count non‑zero pixels in the mask (mask is a uint8 ndarray)
+            pixel_count: int = int(np.count_nonzero(mask.astype(np.uint8)))
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # type: ignore
             original_contour_count = len(contours)
-            
+
             # 最小面積でフィルタ
             contours = [c for c in contours if cv2.contourArea(c) >= self.min_area]  # type: ignore
             filtered_contour_count = len(contours)
-            
+
             if not contours:
                 return {
                     "detected": False,
@@ -324,17 +366,17 @@ class BallTracker(BallTrackerInterface):
                     "detected_position": None,
                     "grid_position": None,
                 }
-            
+
             largest_contour = max(contours, key=cv2.contourArea)  # type: ignore
             max_area = cv2.contourArea(largest_contour)  # type: ignore
             x, y, w, h = cv2.boundingRect(largest_contour)  # type: ignore
             center_x = x + w // 2
             center_y = y + h // 2
-            
-            # グリッド座標に変換（8x600フレーム、3x3グリッド想定）
-            grid_col = min(center_x // (800 // 3), 2)
-            grid_row = min(center_y // (600 // 3), 2)
-            
+
+            height, width = frame.shape[:2]
+            grid_col = min(center_x // (width // 3), 2)
+            grid_row = min(center_y // (height // 3), 2)
+
             return {
                 "detected": True,
                 "pixel_count": pixel_count,
