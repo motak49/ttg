@@ -221,27 +221,23 @@ class CameraManager(CameraInterface):
             logging.warning(f"[get_depth_mm] 深度フレームが None (x={x}, y={y})")
             return 0.0
         
-        h, w = depth_frame.shape
-        
-        # ★ RGB フレーム座標を深度フレーム座標にスケーリング
-        scaled_x, scaled_y = self._scale_rgb_to_depth_coords(x, y)
-        
-        if not (0 <= scaled_x < w and 0 <= scaled_y < h):
-            logging.warning(f"[get_depth_mm] スケーリング後も座標が範囲外: RGB({x}, {y}) -> Depth({scaled_x}, {scaled_y}), フレーム size=({w}x{h})")
+        # カラーフレームと深度フレームの解像度取得
+        depth_h, depth_w = depth_frame.shape
+        color_w, color_h = 1280, 800  # カラーフレーム解像度
+    
+        # 座標を深度フレーム座標系に変換
+        depth_x = int(x * depth_w / color_w)
+        depth_y = int(y * depth_h / color_h)
+    
+        # 範囲チェック
+        if not (0 <= depth_x < depth_w and 0 <= depth_y < depth_h):
+            logging.debug(f"座標が範囲外: depth({depth_x}, {depth_y}), フレーム size=({depth_w}x{depth_h})")
             return 0.0
-        
-        try:
-            depth_value = float(depth_frame[scaled_y, scaled_x])
-            if depth_value > 0:
-                logging.debug(f"[get_depth_mm] 深度値取得成功: RGB({x}, {y}) -> Depth({scaled_x}, {scaled_y}) = {depth_value:.1f} mm")
-                return depth_value
-            else:
-                logging.warning(f"[get_depth_mm] 深度値が 0 以下: RGB({x}, {y}) -> Depth({scaled_x}, {scaled_y})")
-                # 周囲の深度値から代替値を取得（ノイズ回避）
-                return self._get_nearby_depth_mm(scaled_x, scaled_y, depth_frame)
-        except Exception as e:
-            logging.error(f"[get_depth_mm] 深度値の取得/変換エラー: {e}")
-            return 0.0
+    
+        depth_value = float(depth_frame[depth_y, depth_x])
+        if depth_value > 0:
+            logging.debug(f"深度値取得: color({x}, {y}) -> depth({depth_x}, {depth_y}) -> {depth_value:.1f} mm")
+        return depth_value
     
     def _scale_rgb_to_depth_coords(self, x: int, y: int) -> tuple[int, int]:
         """RGB フレーム座標を深度フレーム座標にスケーリングする
