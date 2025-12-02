@@ -6,6 +6,7 @@ OXゲーム（Tick & Cross）実装
 - ヒット座標から 3×3 グリッドのセルへ変換
 - プレイヤー交代でマーカー (〇/?) を配置
 - 勝利判定後にメッセージ表示し、盤面をリセット
+- ★DepthMeasurementService で正確な深度値を取得
 
 依存:
     - PyQt6
@@ -13,6 +14,7 @@ OXゲーム（Tick & Cross）実装
     - backend.screen_manager.ScreenManager
     - backend.ball_tracker.BallTracker
     - frontend.game_logic.GameLogic
+    - common.depth_service.DepthMeasurementService ★NEW
 """
 
 import numpy as np
@@ -28,11 +30,14 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QElapsedTimer
 from common.config import OX_GAME_TARGET_FPS, timer_interval_ms, GRID_LINE_WIDTH, BLUE_BORDER_WIDTH
+from common.depth_service import DepthMeasurementService, DepthConfig as DepthServiceConfig
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QCloseEvent
 
 from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
+from backend.motion_tracker import MotionBasedTracker
+from backend.tracker_selector import TrackerSelector, TrackerMode
 from frontend.game_logic import GameLogic
 
 
@@ -55,9 +60,33 @@ class OxGame(QWidget):
         self.screen_manager = screen_manager
         # 永続化されたスクリーン領域・深度情報をロード
         self.screen_manager.load_log()
-        self.ball_tracker = ball_tracker
-        # ★ ball_tracker にカメラマネージャーの参照を設定（リアルタイム深度取得用）
-        self.ball_tracker.camera_manager = camera_manager
+        
+        # ★DepthMeasurementService の初期化（正確な深度測定用）
+        depth_config = DepthServiceConfig(
+            min_valid_depth_m=0.5,
+            max_valid_depth_m=5.0,
+            interpolation_radius=10
+        )
+        self.depth_measurement_service = DepthMeasurementService(
+            camera_manager,
+            depth_config
+        )
+        
+        # ★ 色ベーストラッカー（従来のBallTracker）
+        self.color_tracker = ball_tracker
+        self.color_tracker.camera_manager = camera_manager
+        self.color_tracker.depth_measurement_service = self.depth_measurement_service
+        
+        # ★ モーションベーストラッカー（新規）
+        self.motion_tracker = MotionBasedTracker(screen_manager, camera_manager)
+        self.motion_tracker.depth_measurement_service = self.depth_measurement_service
+        
+        # ★ TrackerSelector で両トラッカーを統合（HYBRID モードで動作）
+        self.ball_tracker = TrackerSelector(
+            color_tracker=self.color_tracker,
+            motion_tracker=self.motion_tracker,
+            default_mode=TrackerMode.HYBRID
+        )
 
         # ゲームロジック
         self.game_logic = GameLogic()
@@ -284,16 +313,19 @@ class OxGame(QWidget):
             hit = self.ball_tracker.check_target_hit(frame)  # type: ignore[arg-type]
             # 検出情報を取得（改善: 両ゲームモード共通機能）
             detection_info = self.ball_tracker.get_detection_info(frame)  # type: ignore[arg-type]
-            # リアルタイム深度を常に取得（検出状況に関わらず）
-            detected_result = self.ball_tracker.detect_ball(frame)  # type: ignore[arg-type]
-            if detected_result is not None:
-                _, _, realtime_depth = detected_result
-                # 深度ソースを判定（簡易判定）
-                # 詳細はログファイルで確認可能
-                if self.ball_tracker.camera_manager is not None:
-                    depth_source = "RT or キャッシュ"
-                else:
-                    depth_source = "設定値"
+            
+            # ★ DepthService を使用してリアルタイム深度を取得
+            if detection_info and detection_info.get("detected"):
+                detected_pos = detection_info.get("detected_position")
+                if detected_pos is not None:
+                    x, y = detected_pos
+                    # Service経由で深度を測定
+                    realtime_depth = self.depth_measurement_service.measure_at_rgb_coords(x, y)
+                    if realtime_depth >= 0.0:
+                        depth_source = "Service (RT)"
+                    else:
+                        realtime_depth = None
+                        depth_source = "測定失敗"
             else:
                 depth_source = "-"
         else:

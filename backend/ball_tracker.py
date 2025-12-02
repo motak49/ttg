@@ -10,6 +10,7 @@ from backend.screen_manager import ScreenManager
 
 from backend.interfaces import BallTrackerInterface
 from common.logger import logger
+from common.config import FALLBACK_TO_SCREEN_DEPTH
 from common.hit_detection import FrontCollisionDetector
 
 
@@ -38,6 +39,8 @@ class BallTracker(BallTrackerInterface):
         self._collision_detector: FrontCollisionDetector = (collision_detector if collision_detector is not None else FrontCollisionDetector(self.screen_manager))
         # カメラマネージャーへの参照（リアルタイム深度取得用）
         self.camera_manager: Optional[Any] = None
+        # ★深度測定サービスへの参照（補間処理を含む正確な深度取得用）
+        self.depth_measurement_service: Optional[Any] = None
         # ★リアルタイム深度キャッシュ（フォールバック時の最後の有効値）
         self._last_valid_realtime_depth: Optional[float] = None
         self._fallback_count: int = 0  # フォールバック回数のカウント
@@ -143,7 +146,7 @@ class BallTracker(BallTrackerInterface):
                     and isinstance(item[1], np.ndarray)
                 ):
                     ranges.append((item[0], item[1]))
-        mask: NDArray[np.uint8] = np.zeros(hsv.shape[:2], dtype=np.uint8)
+        mask = np.zeros(hsv.shape[:2], dtype=np.uint8)  # type: ignore
         for lo, hi in ranges:
             cur_mask = cv2.inRange(hsv, lo, hi)
             mask = cv2.bitwise_or(mask, cur_mask)  # type: ignore
@@ -166,9 +169,40 @@ class BallTracker(BallTrackerInterface):
         ball_x = x + w // 2
         ball_y = y + h // 2
 
-        # ★ リアルタイム深度を取得（カメラマネージャーから）
+        # ★ 優先度順に深度取得を試みる
+        # 1. DepthMeasurementService (補間処理を含む正確な深度)
+        # 2. camera_manager.get_depth_mm() (リアルタイム深度、ノイズあり)
+        # 3. キャッシュ (最後の有効深度値)
+        # 4. スクリーン深度 (設定値)
+        
         depth: float = 0.0
         
+        # ★ステップ1: DepthMeasurementService を優先
+        if self.depth_measurement_service is not None:
+            try:
+                depth_m = self.depth_measurement_service.measure_at_rgb_coords(ball_x, ball_y)
+                if depth_m >= 0.0:  # 正常な値
+                    depth = depth_m
+                    self._last_valid_realtime_depth = depth
+                    self._fallback_count = 0
+                    import logging
+                    logging.info(
+                        f"[detect_ball] ✓ DepthMeasurementService成功: {depth:.2f}m "
+                        f"(座標: {ball_x}, {ball_y})"
+                    )
+                    return (ball_x, ball_y, depth)
+                else:
+                    import logging
+                    logging.debug(
+                        f"[detect_ball] ⚠ DepthMeasurementService失敗（-1.0）"
+                    )
+            except Exception as e:
+                import logging
+                logging.warning(
+                    f"[detect_ball] ⚠ DepthMeasurementService例外: {e}"
+                )
+        
+        # ★ステップ2: camera_manager.get_depth_mm() を試行
         if self.camera_manager is not None:
             try:
                 depth_mm = self.camera_manager.get_depth_mm(ball_x, ball_y)
@@ -177,7 +211,11 @@ class BallTracker(BallTrackerInterface):
                     self._last_valid_realtime_depth = depth
                     self._fallback_count = 0
                     import logging
-                    logging.info(f"[detect_ball] ✓ リアルタイム深度取得成功: {depth:.2f}m (座標: {ball_x}, {ball_y})")
+                    logging.info(
+                        f"[detect_ball] ✓ camera_manager深度取得成功: {depth:.2f}m "
+                        f"(座標: {ball_x}, {ball_y})"
+                    )
+                    return (ball_x, ball_y, depth)
                 else:
                     # リアルタイム深度が取得できない場合
                     if self._last_valid_realtime_depth is not None:
@@ -185,29 +223,42 @@ class BallTracker(BallTrackerInterface):
                         depth = self._last_valid_realtime_depth
                         self._fallback_count += 1
                         import logging
-                        logging.warning(f"[detect_ball] ⚠ リアルタイム深度 0: キャッシュ値を使用 {depth:.2f}m (フォールバック回数: {self._fallback_count})")
+                        logging.warning(
+                            f"[detect_ball] ⚠ camera_manager深度0: キャッシュ値を使用 "
+                            f"{depth:.2f}m (フォールバック回数: {self._fallback_count})"
+                        )
+                        return (ball_x, ball_y, depth)
                     else:
                         # キャッシュもない場合はスクリーン深度にフォールバック
                         depth = self.screen_manager.get_screen_depth() or 0.0
                         import logging
-                        logging.warning(f"[detect_ball] ⚠ リアルタイム深度取得失敗（キャッシュなし）: スクリーン深度にフォールバック {depth:.2f}m")
+                        logging.warning(
+                            f"[detect_ball] ⚠ camera_manager深度取得失敗（キャッシュなし）: "
+                            f"スクリーン深度にフォールバック {depth:.2f}m"
+                        )
+                        return (ball_x, ball_y, depth)
             except Exception as e:
                 import logging
-                logging.error(f"[detect_ball] ✗ リアルタイム深度取得例外: {e}")
+                logging.error(f"[detect_ball] ✗ camera_manager深度取得例外: {e}")
                 if self._last_valid_realtime_depth is not None:
                     # キャッシュがあればそれを使用
                     depth = self._last_valid_realtime_depth
                     self._fallback_count += 1
+                    return (ball_x, ball_y, depth)
                 else:
                     # キャッシュもない場合はスクリーン深度
                     depth = self.screen_manager.get_screen_depth() or 0.0
+                    return (ball_x, ball_y, depth)
         else:
             # カメラマネージャーが設定されていない場合はスクリーン深度を使用
             depth = self.screen_manager.get_screen_depth() or 0.0
             import logging
-            logging.warning(f"[detect_ball] ⚠ カメラマネージャーなし: スクリーン深度を使用 {depth:.2f}m")
+            logging.warning(
+                f"[detect_ball] ⚠ カメラマネージャーなし: スクリーン深度を使用 {depth:.2f}m"
+            )
+            return (ball_x, ball_y, depth)
         
-        return (ball_x, ball_y, depth)
+        return None
 
     def get_hit_area(self, frame: NDArray[np.uint8]) -> Optional[Tuple[int, int, float]]:
         """ボールが到達した座標と深度を取得"""

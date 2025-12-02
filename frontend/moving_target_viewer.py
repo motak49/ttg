@@ -18,6 +18,7 @@ from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
 from backend.moving_target_manager import MovingTargetManager
 from common.hit_detection import FrontCollisionDetector
+from common.depth_service import DepthMeasurementService, DepthConfig as DepthServiceConfig
 import cv2
 import numpy as np
 from pathlib import Path
@@ -54,6 +55,17 @@ class MovingTargetViewer(QMainWindow):
             self.front_detector = front_detector
         else:
             self.front_detector = FrontCollisionDetector(screen_manager)
+        
+        # 深度測定サービス（DepthService）初期化
+        depth_config = DepthServiceConfig(
+            min_valid_depth_m=0.5,
+            max_valid_depth_m=5.0,
+            interpolation_radius=10
+        )
+        self.depth_measurement_service = DepthMeasurementService(
+            camera_manager,
+            depth_config
+        )
         
         # カメラフレーム表示用ラベル
         self.image_label = QLabel()
@@ -153,9 +165,17 @@ class MovingTargetViewer(QMainWindow):
             # ボール位置を取得して、動くターゲットへの当たり判定
             ball_pos = self.ball_tracker.get_last_detected_position()
             if ball_pos is not None:
+                # ボール位置での深度を測定
+                ball_x, ball_y = ball_pos
+                depth_m = self.depth_measurement_service.measure_at_rgb_coords(ball_x, ball_y)
+                confidence = self.depth_measurement_service.get_confidence_score(ball_x, ball_y)
+                depth_source = "Service (RT)" if depth_m > 0 else "Cache"
+                
+                # 動くターゲットへの当たり判定
                 collisions = self.moving_target_manager.check_ball_collision(ball_pos)
                 if collisions:
-                    QMessageBox.information(self, "当たり！", "ボールがターゲットに当たった！")
+                    collision_msg = f"ボールがターゲットに当たった！\n深度: {depth_m:.2f}m (信頼度: {confidence:.2f}) [{depth_source}]"
+                    QMessageBox.information(self, "当たり！", collision_msg)
 
             # 前面スクリーンへの衝突判定（深度を含む検出結果で判定）
             detected = self.ball_tracker.get_hit_area(frame)  # type: ignore[arg-type]

@@ -3,7 +3,7 @@ import logging
 from typing import Optional, Any
 from datetime import timedelta
 
-import depthai as dai
+import depthai as dai  # used for pipeline creation
 from PyQt6.QtCore import Qt
 
 from backend.interfaces import CameraInterface
@@ -73,13 +73,7 @@ class CameraManager(CameraInterface):
             logging.debug("[initialize_camera] Setting up preview output...")
             preview = cam_rgb.requestOutput((1280, 800), type=dai.ImgFrame.Type.RGB888p)
             
-            # ステップ 3.5: 出力ストリームの FPS を 120 に設定（ハードウェア上限）
-            logging.debug(f"[initialize_camera] Setting preview FPS to {self.fps}...")
-            try:
-                preview.setFps(self.fps)
-                logging.info(f"[initialize_camera] Preview FPS set to {self.fps}")
-            except Exception as fps_err:
-                logging.warning(f"Preview FPS設定エラー（デフォルト値で続行）: {fps_err}")
+            # ステップ 3.5: 出力ストリームの FPS 設定は不要です。preview の setFps はサポートされていません。
             
             # ステップ 4: 出力キューを作成
             logging.debug("[initialize_camera] Creating output queue...")
@@ -297,6 +291,40 @@ class CameraManager(CameraInterface):
     def get_depth_at(self, x: int, y: int) -> float:
         """互換性維持"""
         return self.get_depth_mm(x, y)
+    
+    def get_raw_depth_at(self, x: int, y: int) -> float:
+        """
+        深度フレーム座標 (x, y) から深度を取得します（座標変換なし）
+
+        Args:
+            x (int): 深度フレーム上の X 座標
+            y (int): 深度フレーム上の Y 座標
+
+        Returns:
+            float: 深度値 (mm)。範囲外または取得失敗時は 0.0 を返す
+        """
+        depth_frame = self.get_depth_frame()
+        if depth_frame is None:
+            logging.warning(f"[get_raw_depth_at] 深度フレームが None (x={x}, y={y})")
+            return 0.0
+
+        # 深度フレームのサイズを取得
+        h, w = depth_frame.shape
+        if not (0 <= x < w and 0 <= y < h):
+            logging.debug(f"[get_raw_depth_at] 座標が範囲外: ({x}, {y}), フレーム size=({w}x{h})")
+            return 0.0
+
+        depth_value = float(depth_frame[y, x])
+        if depth_value > 0:
+            logging.debug(f"[get_raw_depth_at] 深度値取得: ({x}, {y}) -> {depth_value:.1f} mm")
+        return depth_value
+
+    def get_rgb_dimensions(self) -> tuple[int, int]:
+        """
+        現在の RGB フレーム幅と高さを取得する。
+        カメラが未初期化またはフレーム未取得の場合はデフォルト (1280, 800) を返す。
+        """
+        return (self._rgb_frame_width, self._rgb_frame_height)
 
     def set_fps(self, fps: int) -> None:
         """FPS を設定"""

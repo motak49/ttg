@@ -19,6 +19,7 @@ from PyQt6.QtGui import QPainter, QColor, QPen, QImage, QPixmap, QCloseEvent, QF
 from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
+from common.depth_service import DepthMeasurementService, DepthConfig as DepthServiceConfig
 import cv2
 import numpy as np
 from common.logger import logger
@@ -50,6 +51,17 @@ class TrackTargetConfig(QWidget):
         self.camera_manager = camera_manager
         self.screen_manager = screen_manager
         self.ball_tracker = ball_tracker
+        
+        # 深度測定サービス（DepthService）初期化
+        depth_config = DepthServiceConfig(
+            min_valid_depth_m=0.5,
+            max_valid_depth_m=5.0,
+            interpolation_radius=10
+        )
+        self.depth_measurement_service = DepthMeasurementService(
+            camera_manager,
+            depth_config
+        )
         
         # デバッグ情報を保持
         self.last_detection_info: Dict[str, Any] = {
@@ -353,6 +365,19 @@ class TrackTargetConfig(QWidget):
             circle_pen = QPen(QColor(0, 255, 255), 2)
             painter.setPen(circle_pen)
             painter.drawEllipse(center_x - 10, center_y - 10, 20, 20)
+            
+            # ボール位置での深度を測定
+            depth_m = self.depth_measurement_service.measure_at_rgb_coords(center_x, center_y)
+            confidence = self.depth_measurement_service.get_confidence_score(center_x, center_y)
+            
+            # 深度情報を画面に表示
+            if depth_m > 0:
+                font_depth = painter.font()
+                font_depth.setPointSize(10)
+                painter.setFont(font_depth)
+                painter.setPen(QColor(255, 255, 0))  # 黄色で表示
+                depth_text = f"深度: {depth_m:.2f}m (信頼度: {confidence:.2f})"
+                painter.drawText(10, 30, depth_text)
 
         except Exception as e:
             print(f"ハイライト表示エラー: {e}")

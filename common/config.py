@@ -35,6 +35,9 @@ DEPTH_TOLERANCE_M = 0.05
 # 角度による衝突判定を有効にするか（デフォルトは無効）
 ENABLE_ANGLE_COLLISION_CHECK = False
 
+# フォールバック設定: BallTracker が深度取得失敗時にスクリーン深度へフォールバックしない
+FALLBACK_TO_SCREEN_DEPTH = False
+
 # 設定ファイルパス
 TRACKED_TARGET_CONFIG_PATH = "TrackBallLogs/tracked_target_config.json"
 SCREEN_AREA_LOG_PATH = "ScreenAreaLogs/area_log.json"

@@ -13,6 +13,7 @@ from PyQt6.QtGui import QPainter, QColor, QPen, QImage, QPixmap, QCloseEvent
 from backend.camera_manager import CameraManager
 from backend.screen_manager import ScreenManager
 from backend.ball_tracker import BallTracker
+from common.depth_service import DepthMeasurementService, DepthConfig as DepthServiceConfig
 
 from frontend.game_logic import game_logic
 import logging
@@ -37,6 +38,17 @@ class TrackTargetViewer(QWidget):
         self.camera_manager = camera_manager
         self.screen_manager = screen_manager
         self.ball_tracker = ball_tracker
+        
+        # 深度測定サービス（DepthService）初期化
+        depth_config = DepthServiceConfig(
+            min_valid_depth_m=0.5,
+            max_valid_depth_m=5.0,
+            interpolation_radius=10
+        )
+        self.depth_measurement_service = DepthMeasurementService(
+            camera_manager,
+            depth_config
+        )
 
         # カメラフレームを表示する QLabel
         self.video_label = QLabel(self)
@@ -158,6 +170,22 @@ class TrackTargetViewer(QWidget):
                     self._draw_tracking_highlight(painter, frame, lower_bound, upper_bound)
                     # デバッグ出力
                     print(f"[Viewer] Drawing highlight with range: lower={list(lower_bound)}, upper={list(upper_bound)}")
+                    
+                    # ボール位置での深度を測定
+                    ball_pos = self.ball_tracker.get_last_detected_position()
+                    if ball_pos is not None:
+                        ball_x, ball_y = ball_pos
+                        depth_m = self.depth_measurement_service.measure_at_rgb_coords(ball_x, ball_y)
+                        confidence = self.depth_measurement_service.get_confidence_score(ball_x, ball_y)
+                        
+                        # 深度情報を画面に表示
+                        if depth_m > 0:
+                            font = painter.font()
+                            font.setPointSize(12)
+                            painter.setFont(font)
+                            painter.setPen(QColor(0, 255, 0))  # 緑色で表示
+                            depth_text = f"深度: {depth_m:.2f}m (信頼度: {confidence:.2f})"
+                            painter.drawText(10, 60, depth_text)
         except Exception as e:
             print(f"トラッキング対象表示エラー: {e}")
 
